@@ -1,0 +1,20 @@
+{
+  "commands": [
+    {
+      "ExerciseCommand": {
+        "choice": "Archive",
+        "choiceArgument": {},
+        "contractId": "<contractId>",
+        "templateId": "#cash-balance-test-contract:CashBalance:CashBalance"
+      }
+    }
+  ],
+  "userId": "javier-stark",
+  "commandId": "archive-command-cashbalance",
+  "actAs": [
+    "<party>"
+  ],
+  "readAs": [
+    "<party>"
+  ]
+}

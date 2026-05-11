@@ -1,0 +1,33 @@
+{
+  "commands": [
+    {
+      "CreateCommand": {
+        "createArguments": {
+          "accountant": "<party>",
+          "cash" : {
+            "currency": "USD",
+            "amount": 1000
+          },
+          "account": {
+            "owner" : "<party>",
+            "number": "1234567890",
+            "bank": {
+                "party": "<party>",
+                "address": "123 Main St, Anytown, USA",
+                "telephone": "555-123-4567"
+            }
+          }
+        },
+        "templateId": "#cash-balance-test-contract:CashBalance:CashBalance"
+      }
+    }
+  ],
+  "userId": "javier-stark",
+  "commandId": "first-create-command-cashbalance",
+  "actAs": [
+    "<party>"
+  ],
+  "readAs": [
+    "<party>"
+  ]
+}

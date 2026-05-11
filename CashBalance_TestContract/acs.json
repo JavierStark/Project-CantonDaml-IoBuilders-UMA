@@ -1,0 +1,21 @@
+{
+  "eventFormat": {
+    "filtersByParty": {},
+    "filtersForAnyParty": {
+      "cumulative": [
+        {
+          "identifierFilter": {
+            "WildcardFilter": {
+              "value": {
+                "includeCreatedEventBlob": true
+              }
+            }
+          }
+        }
+      ]
+    },
+    "verbose": false
+  },
+  "verbose": false,
+  "activeAtOffset": 10
+}
