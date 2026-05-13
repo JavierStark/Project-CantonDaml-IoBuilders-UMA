@@ -1,0 +1,20 @@
+nodes.local.start()
+
+val mydomainPort = Option(System.getProperty("canton-examples.mydomain-port")).getOrElse("5018")
+
+participant1.domains.connect("mydomain", s"http://localhost:$mydomainPort")
+participant2.domains.connect("mydomain", s"http://localhost:$mydomainPort")
+participant3.domains.connect("mydomain", s"http://localhost:$mydomainPort")
+
+utils.retry_until_true {
+    participant1.domains.active("mydomain")
+}
+utils.retry_until_true {
+    participant2.domains.active("mydomain")
+}
+utils.retry_until_true {
+    participant3.domains.active("mydomain")
+}
+
+participant2.health.ping(participant1)
+participant3.health.ping(participant1)
