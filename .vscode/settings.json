@@ -1,6 +1,0 @@
-{
-    "files.readonlyInclude": {
-        "**/.daml/unpacked-dars/**": true
-    },
-    "daml.useDPMWhenAvailable": true
-}
