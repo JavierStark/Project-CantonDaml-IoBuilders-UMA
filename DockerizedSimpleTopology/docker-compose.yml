@@ -84,3 +84,23 @@ services:
     depends_on:
       synchronizer:
         condition: service_started
+
+  participant3:
+    image: europe-docker.pkg.dev/da-images/public/docker/canton-participant:3.4.8
+    container_name: participant3
+    ports:
+      - "5031:5031"
+      - "5032:5032"
+      - "5033:5033"
+    volumes:
+      - ./configs/participant3-bootstrap.sc:/app/bootstrap.sc:ro
+    environment:
+      - LOG_LEVEL_STDOUT=INFO
+      - ADDITIONAL_CONFIG_01=canton.participants.participant.admin-api.port = 5032
+      - ADDITIONAL_CONFIG_02=canton.participants.participant.ledger-api.port = 5031
+      - ADDITIONAL_CONFIG_03=canton.participants.participant.http-ledger-api.port = 5033
+      - ADDITIONAL_CONFIG_04=canton.participants.participant.ledger-api.auth-services = []
+      - ADDITIONAL_CONFIG_05=canton.participants.participant.storage.type = memory
+    depends_on:
+      synchronizer:
+        condition: service_started
