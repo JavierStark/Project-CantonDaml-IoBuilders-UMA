@@ -7,6 +7,7 @@ services:
       - "5002:5002"
     volumes:
       - ./configs/sequencer-bootstrap.sc:/app/bootstrap.sc:ro
+      - ./configs/shared-bootstrap.sc:/app/shared-bootstrap.sc:ro
     environment:
       - LOG_LEVEL_STDOUT=INFO
       - ADDITIONAL_CONFIG_01=canton.sequencers.sequencer.public-api.port = 5001
@@ -21,6 +22,7 @@ services:
       - "5202:5202"
     volumes:
       - ./configs/mediator-bootstrap.sc:/app/bootstrap.sc:ro
+      - ./configs/shared-bootstrap.sc:/app/shared-bootstrap.sc:ro
     environment:
       - LOG_LEVEL_STDOUT=INFO
       - ADDITIONAL_CONFIG_01=canton.mediators.mediator.admin-api.port = 5202
@@ -31,6 +33,7 @@ services:
     container_name: synchronizer
     volumes:
       - ./configs/synchronizer-bootstrap.sc:/app/bootstrap.sc:ro
+      - ./configs/shared-bootstrap.sc:/app/shared-bootstrap.sc:ro
     environment:
       - LOG_LEVEL_STDOUT=INFO
       - ADDITIONAL_CONFIG_01=canton.remote-sequencers.sequencer1.public-api.port = 5001
@@ -54,6 +57,7 @@ services:
       - "5013:5013"
     volumes:
       - ./configs/participant1-bootstrap.sc:/app/bootstrap.sc:ro
+      - ./configs/shared-bootstrap.sc:/app/shared-bootstrap.sc:ro
     environment:
       - LOG_LEVEL_STDOUT=INFO
       - ADDITIONAL_CONFIG_01=canton.participants.participant.admin-api.port = 5012
@@ -74,6 +78,7 @@ services:
       - "5023:5023"
     volumes:
       - ./configs/participant2-bootstrap.sc:/app/bootstrap.sc:ro
+      - ./configs/shared-bootstrap.sc:/app/shared-bootstrap.sc:ro
     environment:
       - LOG_LEVEL_STDOUT=INFO
       - ADDITIONAL_CONFIG_01=canton.participants.participant.admin-api.port = 5022
@@ -94,6 +99,7 @@ services:
       - "5033:5033"
     volumes:
       - ./configs/participant3-bootstrap.sc:/app/bootstrap.sc:ro
+      - ./configs/shared-bootstrap.sc:/app/shared-bootstrap.sc:ro
     environment:
       - LOG_LEVEL_STDOUT=INFO
       - ADDITIONAL_CONFIG_01=canton.participants.participant.admin-api.port = 5032
