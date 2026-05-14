@@ -1,0 +1,86 @@
+services:
+  sequencer1:
+    image: europe-docker.pkg.dev/da-images/public/docker/canton-sequencer:3.4.8
+    container_name: sequencer1
+    ports:
+      - "5001:5001"
+      - "5002:5002"
+    volumes:
+      - ./configs/sequencer-bootstrap.sc:/app/bootstrap.sc:ro
+    environment:
+      - LOG_LEVEL_STDOUT=INFO
+      - ADDITIONAL_CONFIG_01=canton.sequencers.sequencer.public-api.port = 5001
+      - ADDITIONAL_CONFIG_02=canton.sequencers.sequencer.admin-api.port = 5002
+      - ADDITIONAL_CONFIG_03=canton.sequencers.sequencer.storage.type = memory
+      - ADDITIONAL_CONFIG_04=canton.sequencers.sequencer.sequencer.config.storage.type = memory
+
+  mediator1:
+    image: europe-docker.pkg.dev/da-images/public/docker/canton-mediator:3.4.8
+    container_name: mediator1
+    ports:
+      - "5202:5202"
+    volumes:
+      - ./configs/mediator-bootstrap.sc:/app/bootstrap.sc:ro
+    environment:
+      - LOG_LEVEL_STDOUT=INFO
+      - ADDITIONAL_CONFIG_01=canton.mediators.mediator.admin-api.port = 5202
+      - ADDITIONAL_CONFIG_02=canton.mediators.mediator.storage.type = memory
+
+  synchronizer:
+    image: europe-docker.pkg.dev/da-images/public/docker/canton-base:3.4.8
+    container_name: synchronizer
+    volumes:
+      - ./configs/synchronizer-bootstrap.sc:/app/bootstrap.sc:ro
+    environment:
+      - LOG_LEVEL_STDOUT=INFO
+      - ADDITIONAL_CONFIG_01=canton.remote-sequencers.sequencer1.public-api.port = 5001
+      - ADDITIONAL_CONFIG_02=canton.remote-sequencers.sequencer1.public-api.address = sequencer1
+      - ADDITIONAL_CONFIG_03=canton.remote-sequencers.sequencer1.admin-api.port = 5002
+      - ADDITIONAL_CONFIG_04=canton.remote-sequencers.sequencer1.admin-api.address = sequencer1
+      - ADDITIONAL_CONFIG_05=canton.remote-mediators.mediator1.admin-api.port = 5202
+      - ADDITIONAL_CONFIG_06=canton.remote-mediators.mediator1.admin-api.address = mediator1
+    depends_on:
+      sequencer1:
+        condition: service_started
+      mediator1:
+        condition: service_started
+
+  participant1:
+    image: europe-docker.pkg.dev/da-images/public/docker/canton-participant:3.4.8
+    container_name: participant1
+    ports:
+      - "5011:5011"
+      - "5012:5012"
+      - "5013:5013"
+    volumes:
+      - ./configs/participant1-bootstrap.sc:/app/bootstrap.sc:ro
+    environment:
+      - LOG_LEVEL_STDOUT=INFO
+      - ADDITIONAL_CONFIG_01=canton.participants.participant.admin-api.port = 5012
+      - ADDITIONAL_CONFIG_02=canton.participants.participant.ledger-api.port = 5011
+      - ADDITIONAL_CONFIG_03=canton.participants.participant.http-ledger-api.port = 5013
+      - ADDITIONAL_CONFIG_04=canton.participants.participant.ledger-api.auth-services = []
+      - ADDITIONAL_CONFIG_05=canton.participants.participant.storage.type = memory
+    depends_on:
+      synchronizer:
+        condition: service_started
+
+  participant2:
+    image: europe-docker.pkg.dev/da-images/public/docker/canton-participant:3.4.8
+    container_name: participant2
+    ports:
+      - "5021:5021"
+      - "5022:5022"
+      - "5023:5023"
+    volumes:
+      - ./configs/participant2-bootstrap.sc:/app/bootstrap.sc:ro
+    environment:
+      - LOG_LEVEL_STDOUT=INFO
+      - ADDITIONAL_CONFIG_01=canton.participants.participant.admin-api.port = 5022
+      - ADDITIONAL_CONFIG_02=canton.participants.participant.ledger-api.port = 5021
+      - ADDITIONAL_CONFIG_03=canton.participants.participant.http-ledger-api.port = 5023
+      - ADDITIONAL_CONFIG_04=canton.participants.participant.ledger-api.auth-services = []
+      - ADDITIONAL_CONFIG_05=canton.participants.participant.storage.type = memory
+    depends_on:
+      synchronizer:
+        condition: service_started
