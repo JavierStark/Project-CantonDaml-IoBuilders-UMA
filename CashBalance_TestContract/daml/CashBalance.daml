@@ -2,11 +2,15 @@ module CashBalance where
 
 import Daml.Script
 
+-- El data se usa para definir tipos de datos, es como un struct
+-- El templatese yusa para definir acuerdos legales o contratos,
+-- los templates usan a los data
+
 data Bank = Bank with
-  party : Party
+  party : Party -- Party es es la entidad, el id, el usuario --> Firman, tienen permisos, ejecutan acciones...
   address: Text
   telephone : Text
-    deriving (Eq, Show)
+    deriving (Eq, Show) -- Se refiere a que el objeto se puede comparar y Show representa los datos en Script Result en texto legible
 
 data Account = Account with
   owner : Party
@@ -19,6 +23,13 @@ data Cash = Cash with
   amount : Decimal
     deriving (Eq, Show)
 
+
+-- El with indica el contenido que tiene el contrato, los campos
+-- El where indica el comportamiento que va a tener el contrato
+-- El signatory indica quien debe de firmarlo unicamente (Flow require)
+-- ¿Por que no lleva deriving? Porque daml ya sabe que debe de  compararse al ser un template
+
+
 template CashBalance
   with
     accountant : Party
@@ -26,6 +37,19 @@ template CashBalance
     account : Account
   where
     signatory accountant
+
+
+
+-- Aqui lo que se van a realizar pruebas de que lo que hemos creado funciona
+-- Script do: Emplea el entorno de simulación y ejecuta la secuencia de acciones
+
+-- ¿Qué es allocateParty? Crea una nueva entidad limpia y le asigna un alias
+-- La flechita para la izquierda (<-): Interactua con la red y asigna el resultado a una variable
+
+-- let: Es una forma de asignar valores a variables en local
+-- datín: En el caso de no poner un =, se asigna el valor a la variable del mismo nombre definido arriba
+
+
 
 cash_balance_test = script do
   accountant <- allocateParty "Bob"
@@ -36,13 +60,19 @@ cash_balance_test = script do
       party = bank_party
       address = "High Street"
       telephone = "012 3456 789"
+
     account = Account with
-      owner
-      bank
+      owner  -- Sería Alice como se ha definido en linea 56
+      bank -- Sería el bank definido en linea 59
       number = "ABC123"
+
     cash = Cash with
       currency = "USD"
       amount = 100.0
+
+  -- submit accountant do: "Indica como si (en este caso Bob) hiciese ..."
+  -- createMd: Crea un contrato
+  -- pure(): es un return void o no hay que añadir nada más.
 
   submit accountant do
     createCmd CashBalance with
