@@ -1,20 +1,23 @@
 nodes.local.start()
 
-val mydomainPort = Option(System.getProperty("canton-examples.mydomain-port")).getOrElse("5018")
+println("Inicializando el Synchronizer interno...")
+bootstrap.synchronizer_local()
 
-participant1.domains.connect("mydomain", s"http://localhost:$mydomainPort")
-participant2.domains.connect("mydomain", s"http://localhost:$mydomainPort")
-participant3.domains.connect("mydomain", s"http://localhost:$mydomainPort")
+val syncName = "mi_red_local"
+println("Conectando participantes al Synchronizer...")
+// Usamos connect_local pasándole el objeto seq1 (como lo llamamos en el .conf) en lugar de una URL a pelo
+participant1.synchronizers.connect_local(seq1, alias = syncName)
+participant2.synchronizers.connect_local(seq1, alias = syncName)
+participant3.synchronizers.connect_local(seq1, alias = syncName)
 
 utils.retry_until_true {
-    participant1.domains.active("mydomain")
-}
-utils.retry_until_true {
-    participant2.domains.active("mydomain")
-}
-utils.retry_until_true {
-    participant3.domains.active("mydomain")
+    participant1.synchronizers.active(syncName) &&
+    participant2.synchronizers.active(syncName) &&
+    participant3.synchronizers.active(syncName)
 }
 
+println("Haciendo ping de prueba...")
 participant2.health.ping(participant1)
 participant3.health.ping(participant1)
+
+println("¡Red V3 levantada, conectada y lista!")
