@@ -1,0 +1,66 @@
+module Bond where
+
+-- | Estructura de datos para los terminos financieros fijos del bono.
+-- | Es parecido a un Struct.
+data BondTerms = BondTerms with
+    isin : Text
+    nominalAmount : Decimal
+    currency : Text
+  deriving (Eq, Show)
+
+-- | Contrato principal que representa la titularidad activa del bono digital.
+template DigitalBond
+  with
+    issuer : Party
+    owner : Party
+    terms : BondTerms
+  where
+    signatory issuer, owner
+
+    -- | Cancela la obligacion financiera eliminando el contrato del ACS.
+    choice Redeem : ()
+      controller owner
+      do
+        return ()
+
+    -- | Archiva el bono actual y genera una propuesta de transferencia (Escrow).
+    choice ProposeTransfer : ContractId BondTransferProposal
+      with
+        newOwner : Party
+      controller owner
+      do
+        assertMsg "El nuevo propietario no puede ser el propietario actual" (owner /= newOwner)
+        create BondTransferProposal with
+          bondTerms = terms
+          issuer = issuer
+          currentOwner = owner
+          newOwner = newOwner
+
+-- | Contrato transitorio para capturar el consentimiento del receptor.
+template BondTransferProposal
+  with
+    bondTerms : BondTerms
+    issuer : Party
+    currentOwner : Party
+    newOwner : Party
+  where
+    signatory issuer, currentOwner
+    observer newOwner
+
+    -- | Consume la propuesta y genera el nuevo bono con el nuevo propietario.
+    choice AcceptTransfer : ContractId DigitalBond
+      controller newOwner
+      do
+        create DigitalBond with
+          issuer = issuer
+          owner = newOwner
+          terms = bondTerms
+
+    -- | Devuelve el bono a su estado original bajo el control del dueño anterior.
+    choice CancelTransfer : ContractId DigitalBond
+      controller currentOwner
+      do
+        create DigitalBond with
+          issuer = issuer
+          owner = currentOwner
+          terms = bondTerms

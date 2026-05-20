@@ -1,0 +1,141 @@
+# README 2 — Ficha de Integracion del Ledger: Digital Bond System
+
+## 1. Objetivo de Integracion
+
+### Proposito del Ledger
+Esta especificacion define el entorno de integracion industrial para interactuar con el ledger descentralizado del Bono Digital de IOBuilders. El ledger actua como la fuente unica de la verdad inmutable para el registro de obligaciones financieras, automatizando la transmision de titularidad y garantizando que las operaciones cumplan de forma nativa con los principios de compensacion inmediata sin riesgo de contraparte.
+
+### Workflows Soportados
+* Originacion Automatizada: Registro inicial de los terminos de deuda corporativa vinculados a un balance.
+* Transferencia Segura en Escrow: Intercambio bilateral de propiedad libre de riesgos de doble gasto mediante bloqueos del ACS.
+* Extincion Financiera: Consumo controlado de los contratos al vencimiento del instrumento de renta fija.
+
+---
+
+## 2. Arquitectura de Integracion
+
+### Modelo de Conectividad de Aplicaciones Externas
+Las aplicaciones del backend corporativo (tales como microservicios desarrollados en lenguaje Go) no acceden al codigo fuente del smart contract ni operan directamente sobre los nodos de persistencia. La comunicacion se canaliza de forma estricta a traves de las capas estandar de la Daml Ledger API utilizando dos modalidades de interfaz:
+1. gRPC API: Canal de alta velocidad y baja latencia para streaming de transacciones mediante protocolos HTTP/2. Utilizado para la escucha continua de eventos del ACS mediante el Transaction Service.
+2. HTTP JSON API: Capa de abstraccion REST que transforma los payloads JSON del backend en comandos gRPC firmados. Ideal para operaciones sincronas de creacion y ejercicio de elecciones de contratos.
+
+### Flujo de Datos y Topologia Distribuida en Canton
+Cada entidad financiera (Emisor, Inversores) opera su propio Nodo Participante de Canton. Cuando el backend en Go de una entidad envia un comando, el nodo participante cifra la transaccion y la remite al Dominio Canton. Los componentes de ordenacion (secuenciadores) coordinan el asentamiento de la transaccion de forma privada, garantizando el aislamiento de datos entre los participantes de la red.
+
+---
+
+## 3. Especificacion de Contratos Desplegados
+
+### Identificadores Globales del Artefacto de Produccion
+Para interactuar con los servicios del Ledger, todo componente de backend debe incluir en las cabeceras de sus peticiones el identificador hash inmutable extraido de la compilacion del archivo .dar:
+
+* Package ID Oficial: a676c1ac2af8398824acd7835cf7112588f3fe4127ea701d8bab258c4f44dd90
+
+### Mapeo de Identificadores de Plantilla (Template IDs)
+La identificacion de las estructuras dentro de las llamadas API requiere la concatenacion de la sintaxis estandar PackageID:Modulo:Template. Los identificadores rigidos para integracion son:
+
+1. DigitalBond (Titulo Activo):
+   a676c1ac2af8398824acd7835cf7112588f3fe4127ea701d8bab258c4f44dd90:Bond:DigitalBond
+
+2. BondTransferProposal (Contrato Transitorio de Intercambio):
+   a676c1ac2af8398824acd7835cf7112588f3fe4127ea701d8bab258c4f44dd90:Bond:BondTransferProposal
+
+---
+
+## 4. Catalogo de Operaciones del Ledger
+
+### Operacion 1: Minting (Emision Inicial)
+* Actor Autorizado: Identidad parametrizada como issuer.
+* Metodo API: CommandService / Create
+* Estructura del Payload JSON de Entrada:
+  {
+    "templateId": "a676c1ac2af8398824acd7835cf7112588f3fe4127ea701d8bab258c4f44dd90:Bond:DigitalBond",
+    "argument": {
+      "issuer": "Party_Issuer_Real",
+      "owner": "Party_Issuer_Real",
+      "terms": {
+        "isin": "ES0123456789",
+        "nominalAmount": "500000.00",
+        "currency": "EUR"
+      }
+    }
+  }
+* Impacto en el Ledger State: Se genera una instancia de contrato activo en el ACS.
+* Reglas de Visibilidad: Operacion visible exclusivamente para el nodo participante que gestiona la firma criptografica de la entidad emisora.
+
+### Operacion 2: ProposeTransfer (Inicio de la Transferencia)
+* Actor Autorizado: Debe ser ejecutado estrictamente por la identidad catalogada como el owner del contrato actual.
+* Metodo API: CommandService / Exercise
+* Estructura del Payload JSON de Entrada:
+  {
+    "templateId": "a676c1ac2af8398824acd7835cf7112588f3fe4127ea701d8bab258c4f44dd90:Bond:DigitalBond",
+    "contractId": "ID_DEL_CONTRATO_DIGITAL_BOND_A_TRANSFERIR",
+    "choice": "ProposeTransfer",
+    "argument": {
+      "newOwner": "Party_Inversor_Destinatario"
+    }
+  }
+* Impacto en el Ledger State: 
+  * Consumo: El contrato DigitalBond referenciado queda archivado de manera inmediata e irreversible.
+  * Creacion: Se genera de forma atomica un contrato de tipo BondTransferProposal en estado activo.
+* Reglas de Visibilidad: Canton divulga la transaccion al nodo del Emisor y al nodo del Inversor Destinatario (debido a su condicion de observer).
+
+### Operacion 3: AcceptTransfer (Consolidacion de la Propiedad)
+* Actor Autorizado: Identidad parametrizada exclusivamente como newOwner.
+* Metodo API: CommandService / Exercise
+* Estructura del Payload JSON de Entrada:
+  {
+    "templateId": "a676c1ac2af8398824acd7835cf7112588f3fe4127ea701d8bab258c4f44dd90:Bond:BondTransferProposal",
+    "contractId": "ID_DEL_CONTRATO_BOND_TRANSFER_PROPOSAL_A_ACEPTAR",
+    "choice": "AcceptTransfer",
+    "argument": {}
+  }
+* Impacto en el Ledger State: Archiva el contrato transitorio de propuesta y crea una nueva instancia valida de DigitalBond donde la variable owner pasa a ser el inversor receptor.
+
+### Operacion 4: CancelTransfer (Desistimiento de la Oferta)
+* Actor Autorizado: Ejecutable unicamente por la identidad que figura como currentOwner.
+* Metodo API: CommandService / Exercise
+* Estructura del Payload JSON de Entrada:
+  {
+    "templateId": "a676c1ac2af8398824acd7835cf7112588f3fe4127ea701d8bab258c4f44dd90:Bond:BondTransferProposal",
+    "contractId": "ID_DEL_CONTRATO_BOND_TRANSFER_PROPOSAL_A_CANCELAR",
+    "choice": "CancelTransfer",
+    "argument": {}
+  }
+* Impacto en el Ledger State: Archiva la propuesta y restituye el bono activo original a favor del vendedor.
+
+### Operacion 5: Redeem (Redencion del Titulo)
+* Actor Autorizado: Ejecutable unicamente por la identidad declarada como owner del bono.
+* Metodo API: CommandService / Exercise
+* Estructura del Payload JSON de Entrada:
+  {
+    "templateId": "a676c1ac2af8398824acd7835cf7112588f3fe4127ea701d8bab258c4f44dd90:Bond:DigitalBond",
+    "contractId": "ID_DEL_CONTRATO_BOND_FINAL_A_REDIMIR",
+    "choice": "Redeem",
+    "argument": {}
+  }
+* Impacto en el Ledger State: Archiva el bono de forma definitiva en el ACS sin generar ningun elemento derivado, liquidando la posicion financiera.
+
+---
+
+## 5. Matriz de Seguridad y Reglas de Privacidad
+
+La arquitectura de seguridad de Daml impide la inyeccion de comandos invalidos mediante politicas criptograficas restrictivas:
+
+* Signatories (Firmantes): Exigen la manifestacion del consentimiento explicito de los actores. Ningun contrato puede ser instanciado en el ACS sin la validacion criptografica de las firmas de todos sus signatarios liquidados en el codigo del template.
+* Observers (Observadores): No poseen derechos para iniciar transiciones de estado directas, pero cuentan con autorizacion explicita para leer la estructura de datos del contrato y recibir notificaciones en streaming a traves de la Ledger API de Canton.
+* Controllers (Controladores): Identidades facultadas por el codigo del smart contract para accionar de forma exclusiva una eleccion (choice) concreta. Intentar ejercer una eleccion donde el llamante no coincide con el controlador resulta en un fallo inmediato de autorizacion de la API gRPC.
+
+---
+
+## 6. Procedimiento de Verificacion de Integracion y Buenas Practicas
+
+### Validacion de Estado y Consultas al Active Contract Set (ACS)
+Las aplicaciones externas desarrolladas en Go deben implementar patrones de diseño basados en la escucha del stream de transacciones en lugar de realizar consultas masivas (polling) repetitivas. Esto asegura la escalabilidad y reduce la carga computacional en el nodo participante de Canton.
+
+### Gestion de Errores y Edge Cases Tecnicos durante el Desarrollo
+Durante la estructuracion del entorno de integracion se identificaron tres puntos criticos de atencion operacional:
+1. Mantenimiento del Target de Compilacion: Forzar en las opciones de construccion del DAR la version de salida --target=1.15. Omitir este parametro o declarar la version 2.1 provoca incompatibilidades en los validadores logicos de los nodos Canton v3 estables basados en la version de SDK 2.10.4.
+2. Filtrado del Package ID en Entornos de Integracion: La bandera tradicional --package-id no opera de forma nativa en la instruccion inspect de esta linea del compilador. Para la automatizacion de pipelines de despliegue continuo (CI/CD), se debe utilizar la extraccion combinada mediante herramientas del sistema:
+   daml damlc inspect .daml/dist/iobuilders-digital-bond-1.0.0.dar | grep "package" | head -n 1
+3. Mapeo Rigido de Tipos de Datos: Los campos numericos financieros como nominalAmount se definen bajo el tipo primitivo Decimal de Daml (que soporta precision fija de 28 decimales). Los desarrolladores del backend en Go deben mapear este campo utilizando tipos de datos de alta precision (e.g., shopspring/decimal o cadenas de texto estructuradas) y evitar el uso de flotantes de precision simple o doble (float64) para prevenir desviaciones por redondeo astronomico en las liquidaciones del mercado secundario.

@@ -1,0 +1,10 @@
+sdk-version: 2.10.4
+name: iobuilders-digital-bond
+source: daml
+version: 1.0.0
+dependencies:
+  - daml-prim
+  - daml-stdlib
+  - daml-script
+build-options:
+  - --target=1.15

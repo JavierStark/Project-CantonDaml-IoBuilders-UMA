@@ -1,0 +1,179 @@
+# README 1 — Documentacion Tecnica del Proyecto: Bono Digital Empresarial
+
+## 1. Introduccion
+
+### Objetivo del Proyecto
+El objetivo de este proyecto es implementar un sistema de emision, transferencia y redencion de bonos digitales sobre una infraestructura descentralizada e institucional. Utilizando el lenguaje DAML y la red Canton, se modela un activo financiero digital estructurado de renta fija que cumple con los requisitos normativos del mercado financiero moderno.
+
+### Problema de Negocio que Resuelve
+En los sistemas financieros tradicionales, el ciclo de vida de un bono involucra multiples intermediarios, camaras de compensacion y custodios. Esto genera ineficiencias operativas, retrasos en la liquidacion (T+2 o superior) y un riesgo de contraparte persistente. 
+
+Ademas, en redes de registros distribuidos de acceso publico, la falta de privacidad y la posibilidad de recibir activos no deseados ("air-drops") impiden el cumplimiento de las normativas de Prevencion de Blanqueo de Capitales (AML) y Conozca a su Cliente (KYC). Una entidad regulada no puede reflejar en su balance activos provenientes de origenes desconocidos o sin expresar su consentimiento explicito.
+
+Este proyecto resuelve dichas problemáticas mediante:
+1. Eliminacion del Riesgo de Contraparte: Automatizacion de las transiciones de estado de forma atomica en el ledger.
+2. Consentimiento Bilateral Obligatorio: Implementacion del patron de Propuesta y Aceptacion para garantizar que ningun actor posea un activo sin su autorizacion criptografica expliciva.
+3. Privacidad Institucional: Garantia de que solo las partes legitimas asociadas a una transaccion tengan visibilidad de los datos comerciales off-chain y on-chain.
+
+### Workflow del Bono Digital
+El ciclo de vida del instrumento se compone de tres fases operativas principales:
+1. Emision (Minting): El Emisor origina el bono digital en el ledger, definiendo los terminos financieros fijos. En esta primera fase, el Emisor actua tambien como el propietario inicial del titulo corporativo.
+2. Transferencia (Transfer): El propietario actual inicia un flujo de transferencia bloqueando el activo y emitiendo una propuesta hacia una contraparte especifica. El activo permanece congelado en un estado transitorio (escrow) hasta que el destinatario acepta formalmente la transferencia, momento en el cual se genera el nuevo titulo con las firmas correspondientes.
+3. Redencion (Redeem/Burn): Al vencimiento del activo, el propietario final ejecuta la eleccion de redencion. Esto elimina de forma definitiva el contrato de bono del conjunto de contratos activos (ACS), extinguiendo el pasivo financiero del balance del Emisor.
+
+---
+
+## 2. Arquitectura
+
+### Arquitectura General y Privacidad en Canton
+La infraestructura se basa en Canton Network, un protocolo de red distribuida enfocado en la privacidad de nivel institucional. A diferencia de las blockchains tradicionales donde todas las transacciones se transmiten a todos los nodos, Canton opera bajo un principio de segregacion de datos:
+* Sub-transaction Privacy: Las transacciones se dividen en sub-arboles cifrados. Un nodo participante de Canton solo recibe, valida y almacena los datos de los contratos en los que las identidades gestionadas por dicho nodo son expresamente firmantes (signatories) u observadores (observers).
+* Consenso Privado: Los secuenciadores de Canton ordenan las transacciones sin descifrar el contenido comercial del sub-arbol, protegiendo la confidencialidad de las operaciones de mercado de IOBuilders frente a terceros.
+
+### Modelo DAML y Logica de Estado UTXO
+DAML opera bajo un paradigma basado en UTXO (Unspent Transaction Output). Los contratos en el ledger son inmutables. Modificar el estado de un bono no implica editar sus variables, sino consumir (archivar) el contrato existente y crear un contrato hijo con el nuevo estado de forma atomica en una unica transaccion.
+
+### Componentes del Smart Contract
+
+#### Tipos de Datos (Data Records)
+* BondTerms: Estructura de datos pura e inmutable que encapsula las caracteristicas economicas del instrumento financiero:
+  * isin (Text): Identificador estandarizado de la emision.
+  * nominalAmount (Decimal): Valor nominal o principal del bono.
+  * currency (Text): Divisa de denominacion de los flujos (e.g., EUR).
+
+#### Plantillas (Templates)
+1. DigitalBond: Representa el titulo de propiedad activo y valido del bono.
+2. BondTransferProposal: Representa el contrato intermedio que actua como intermediario criptografico (escrow) durante el proceso de transferencia.
+
+### Roles, Permisos y Matriz de Firmas (Parties)
+
+El sistema define la distribucion de derechos y obligaciones mediante tres roles logicos interpretados por identificadores de tipo Party:
+
+| Elemento / Rol | Signatarios Obligatorios (signatory) | Observadores Autorizados (observer) | Controladores de Elecciones (controller) |
+| :--- | :--- | :--- | :--- |
+| DigitalBond | issuer, owner | Ninguno | owner (puede invocar Redeem o ProposeTransfer) |
+| BondTransferProposal | issuer, currentOwner | newOwner | newOwner (invoca AcceptTransfer) <br> currentOwner (invoca CancelTransfer) |
+
+#### Reglas de Consentimiento Colectivo
+* Bilateralidad: El template DigitalBond exige que tanto el issuer como el owner sean firmantes corporativos. Esto impide algoritmicamente que el emisor modifique unilateralmente las condiciones del bono o que un inversor genere saldos sin respaldo del originador.
+* Aislamiento del Observador: Al incluir al newOwner como observer en la propuesta, Canton propaga de forma automatica y exclusiva dicho contrato al nodo de destino, garantizando los derechos de ejecucion de la contraparte sin comprometer el anonimato ante actores externos.
+
+---
+
+## 3. Estructura del Proyecto
+
+### Arbol de Carpetas
+El proyecto mantiene una organizacion limpia e institucional, separando de manera estricta el codigo logico de produccion de los componentes de aseguramiento de la calidad (QA):
+
+iobuilders-digital-bond/
+├── daml.yaml
+└── daml/
+    ├── Bond.daml
+    └── Test/
+        └── BondWorkflowTest.daml
+
+### Descripcion de Modulos y Archivos
+* daml.yaml: Archivo central de manifiesto del proyecto. Especifica la version del compilador, el nombre del paquete, las librerias core enlazadas y los parametros de optimizacion del Ledger Format.
+* daml/Bond.daml: Modulo principal unificado. Contiene las definiciones estructurales de las plantillas del smart contract para mitigar las dependencias circulares durante el analisis estatico del compilador.
+* daml/Test/BondWorkflowTest.daml: Suite de pruebas automatizadas que utiliza el framework de interpretacion de scripts de Daml para simular transacciones de topologia multiactor.
+
+### Configuracion de Dependencias y Entorno
+El proyecto utiliza las dependencias nativas provistas por el SDK de desarrollo estable:
+* daml-prim: Tipos primitivos basicos del lenguaje.
+* daml-stdlib: Funciones estandar y logica operativa del libro mayor.
+* daml-script: API de simulacion orientada a la validacion automatizada de transacciones.
+
+El archivo de configuracion se define bajo la linea estable del motor de ejecucion:
+
+sdk-version: 2.10.4
+name: iobuilders-digital-bond
+source: daml
+version: 1.0.0
+dependencies:
+  - daml-prim
+  - daml-stdlib
+  - daml-script
+build-options:
+  - --target=1.15
+
+La opcion --target=1.15 fija el formato Daml-LF de salida para garantizar el determinismo estricto requerido por Canton v3.
+
+---
+
+## 4. Desarrollo del Smart Contract
+
+### Decisiones de Diseno Tecnico
+Se ha seleccionado el patron de Propuesta y Aceptacion en detrimento del modelo de transferencia directa. La decision se justifica en que la transferencia atomica unilateral viola las reglas de autorizacion de Daml: para crear un DigitalBond donde la Parte B es dueña, se requiere la firma de la Parte B. Como la Parte A no puede firmar criptograficamente en nombre de la Parte B, es mandatario pasar por un contrato intermedio (BondTransferProposal) que recoja formalmente la firma de B cuando este ejecuta la eleccion de aceptacion.
+
+### Flujo de Ejecucion y Ciclo de Vida
+
+#### 1. Minting (Emision)
+El emisor ejecuta un comando de creacion sobre la plantilla DigitalBond. En este punto inicial, las variables toman los siguientes valores: issuer = Parte_A, owner = Parte_A. El emisor firma de manera bilateral consigo mismo como tenedor inicial del activo de deuda.
+* Estado en el Ledger: Se genera un ContractId DigitalBond en el ACS visible unicamente para el nodo participante del Emisor.
+
+#### 2. Transfer (Procesamiento de Transferencia y Escrow)
+El propietario actual (owner) ejerce la eleccion de consumo ProposeTransfer especificando la identidad del newOwner (Parte B).
+* Mecanismo Interno: Al ser una eleccion clasificable como consuming, el motor de Daml archiva de forma inmediata e irreversible el ContractId DigitalBond original.
+* Creacion de la Propuesta: De forma simultanea y atomica, la eleccion instancia el contrato BondTransferProposal en el ledger. El activo queda efectivamente congelado en garantia criptografica. El dueño actual ya no posee el bono y el destinatario todavia no lo ha recibido, neutralizando el riesgo de doble gasto.
+
+#### 3. Settlement (Aceptacion o Cancelacion)
+* Escenario A (Aceptacion): El newOwner ejerce la eleccion AcceptTransfer. Esto consume la propuesta, archivandola, y crea un nuevo DigitalBond donde la variable owner se sobreescribe con la identidad del newOwner (Parte B). La firma de la Parte B se incorpora al contrato final de forma voluntaria al accionar el gatillo.
+* Escenario B (Cancelacion/Desistimiento): Si el vendedor original decide retirar la oferta, ejecuta CancelTransfer. Esto consume la propuesta y regenera el DigitalBond con el currentOwner reestablecido como propietario legitimo.
+
+#### 4. Redeem/Burn (Redencion Final)
+Al vencimiento, el propietario final del bono invoca la eleccion Redeem. Al ser una eleccion que consume el contrato sin generar ningun elemento hijo, el identificador se archiva en el ACS y el activo deja de existir de forma definitiva en la red.
+
+---
+
+## 5. Testing y Validacion de Seguridad
+
+La suite de pruebas implementada en BondWorkflowTest.daml somete al smart contract a una auditoria automatizada de fronteras de permisos bajo los siguientes vectores de prueba:
+
+### Casos de Uso Verificados
+
+1. Flujo Feliz Completo: Valida la emision inicial por parte de Issuer_A, la creacion de la propuesta, la transicion de propiedad tras la aceptacion de Investor_B y la extincion final del balance mediante Redeem.
+2. Frontera de Autorizacion de Transferencia (submitMustFail de Inversionista): Intenta forzar que un tercero (Investor_B) inicie la transferencia de un bono que aun pertenece a Issuer_A. El motor de consenso de Canton intercepta la operacion y aborta la transaccion por falta de autorizacion criptografica valida del propietario legitimo.
+3. Validacion de Privacidad e Isolation (submitMustFail de Atacante): Simula que una identidad maliciosa (Attacker_C) intenta visualizar o aceptar de forma ilegitima la propuesta de transferencia acordada entre el emisor y el inversor. El ledger bloquea el comando dado que Attacker_C no es ni firmante ni observador del contrato BondTransferProposal, validando la seguridad de los datos.
+4. Frontera de Control Financiero Post-Venta (submitMustFail de Emisor): Verifica que una vez que el bono ha sido transferido con exito a Investor_B, el Issuer_A original pierde toda capacidad operativa para alterar, destruir o redimir el bono de forma unilateral.
+
+---
+
+## 6. Guia de Configuracion y Operaciones del Entorno
+
+### Instalacion del Daml SDK
+Para instalar el entorno oficial de desarrollo y sus herramientas en sistemas operativos basados en Linux, ejecute el comando de descarga e instalacion de binarios core:
+
+curl -sSL https://get.daml.com/ | sh
+
+### Configuracion Critica del Entorno (Variables PATH)
+El instalador aloja los componentes en la ruta de usuario ~/.daml/bin. Para asegurar que el shell de comandos local reconoce las ordenes de forma permanente y evitar el error de orden no encontrada, incorpore la variable al PATH del sistema:
+
+export PATH="$HOME/.daml/bin:$PATH"
+
+Para persistir la configuracion en su estacion de trabajo, añada la linea anterior a su archivo ~/.bashrc o ~/.zshrc segun corresponda.
+
+### Compilacion y Generacion del Artefacto
+Para compilar la logica de negocio y empaquetar el contrato inteligente en un archivo de distribucion unificado (.dar), ejecute desde la raiz del directorio:
+
+daml build
+
+Resultado: Se generara el archivo de produccion en la ruta .daml/dist/iobuilders-digital-bond-1.0.0.dar.
+
+### Ejecucion de la Suite de Pruebas Automatizadas
+Para inicializar de forma automatica el secuenciador y los nodos participantes virtuales de Canton en memoria con el fin de ejecutar los scripts de auditoria, lance el siguiente comando:
+
+daml test
+
+### Resolucion de Problemas y Errores Comunes Detectados
+
+#### Error 1: Orden «daml» no encontrada
+* Causa: El shell actual no tiene cargadas las variables de entorno asociadas a la ruta de instalacion de los binarios de Daml.
+* Solucion: Ejecute export PATH="$HOME/.daml/bin:$PATH" directamente en la ventana activa de su terminal o recargue el perfil con source ~/.bashrc.
+
+#### Error 2: Could not resolve release version 3.1.0
+* Causa: Intentar fijar una version de SDK de la linea 3.x no disponible o no descargada localmente en las herramientas de compilacion del sistema de la maquina.
+* Solucion: Modificar la cabecera del archivo daml.yaml para alinearlo con la distribucion estable instalada (en este caso, sdk-version: 2.10.4).
+
+#### Error 3: Unknown Daml-LF version: 2.1
+* Causa: La version del compilador instalada (2.10.4) procesa formatos de ledger de la serie 1.x y no reconoce el target automatico de compilacion de compiladores superiores.
+* Solucion: Actualizar el parametro dentro de las opciones de construccion del daml.yaml fijando el estandar compatible: - --target=1.15.

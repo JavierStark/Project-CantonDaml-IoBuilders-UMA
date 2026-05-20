@@ -1,0 +1,50 @@
+module Test.BondWorkflowTest where
+
+import Daml.Script
+import Bond
+
+runBondWorkflow : Script ()
+runBondWorkflow = script do
+  -- Inicializacion de identidades en los nodos de Canton
+  issuerParty <- allocateParty "Issuer_A"
+  investorB <- allocateParty "Investor_B"
+  attackerParty <- allocateParty "Attacker_C"
+
+  let 
+    termsEUR = BondTerms with
+      isin = "ES0123456789"
+      nominalAmount = 500000.0
+      currency = "EUR"
+
+  -- 1. Emision (Minting)
+  bondCid <- submit issuerParty do
+    createCmd DigitalBond with
+      issuer = issuerParty
+      owner = issuerParty
+      terms = termsEUR
+
+  -- 2. Validacion de frontera: No se permiten transferencias no autorizadas
+  submitMustFail investorB do
+    exerciseCmd bondCid ProposeTransfer with newOwner = investorB
+
+  -- 3. Generacion de la propuesta
+  proposalCid <- submit issuerParty do
+    exerciseCmd bondCid ProposeTransfer with newOwner = investorB
+
+  -- 4. Validacion de privacidad: El atacante no puede acceder a la propuesta
+  submitMustFail attackerParty do
+    exerciseCmd proposalCid AcceptTransfer
+
+  -- 5. Aceptacion de la transferencia
+  transferredBondCid <- submit investorB do
+    exerciseCmd proposalCid AcceptTransfer
+
+  -- 6. Validacion de propiedad: El emisor pierde control operativo tras la venta
+  submitMustFail issuerParty do
+    exerciseCmd transferredBondCid Redeem
+
+  -- 7. Redencion final (Burn)
+  submit investorB do
+    exerciseCmd transferredBondCid Redeem
+
+  return ()
