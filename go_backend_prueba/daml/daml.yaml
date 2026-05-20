@@ -1,0 +1,7 @@
+sdk-version: 3.4.11
+name: debt-settlement
+version: 0.0.1
+source: Loan
+dependencies:
+  - daml-prim
+  - daml-stdlib

@@ -25,7 +25,6 @@ The simple topology example can be invoked using:
 When the bootstrap script runs, it starts all configured local instances, bootstraps the domain setup, connects each participant to `mydomain`, waits for all participants to become active, and then performs health pings to confirm that the participants are connected successfully.
 
 ## Accessing the Ledger via HTTP (JSON API)
-
 WIP
 
 ### Canton REPL Reference Guide

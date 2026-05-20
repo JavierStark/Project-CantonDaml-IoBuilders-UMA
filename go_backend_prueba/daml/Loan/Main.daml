@@ -1,0 +1,34 @@
+module Loan.Main where
+
+import DA.Date
+
+template USDC
+  with
+    issuer : Party
+    owner : Party
+    amount : Decimal
+  where
+    signatory issuer, owner
+    observer issuer
+
+template DebtInstrument
+  with
+    issuer : Party
+    owner : Party
+    notional : Decimal
+    currency : Text
+  where
+    signatory issuer
+    observer owner
+
+    choice AtomicSettlement : ()
+      with
+        usdcCid : ContractId USDC
+      controller owner
+      do
+        usdc <- fetch usdcCid
+        assertMsg "USDC owner mismatch" (usdc.owner == owner)
+        assertMsg "USDC issuer mismatch" (usdc.issuer == issuer)
+        assertMsg "USDC amount mismatch" (usdc.amount == notional)
+        archive usdcCid
+        archive self
