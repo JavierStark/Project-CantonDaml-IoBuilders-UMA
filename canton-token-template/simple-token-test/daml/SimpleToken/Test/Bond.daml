@@ -1,0 +1,172 @@
+-- | Bond-specific unit tests: mint, transfer, burn.
+module SimpleToken.Test.Bond where
+
+import DA.Date
+
+import Splice.Api.Token.MetadataV1
+import Splice.Api.Token.HoldingV1
+import Splice.Api.Token.TransferInstructionV1
+
+import SimpleToken.Rules
+import SimpleToken.Holding
+import SimpleToken.Testing.SimpleRegistry
+import SimpleToken.Testing.WalletClient
+import SimpleToken.Test.Setup
+
+import Daml.Script
+
+-- Test 1: Admin mints a bond for an owner
+test_mint : Script ()
+test_mint = do
+  TestEnv{..} <- setupTestEnv
+  let admin = registry.admin
+      owner = parties.alice
+  [(rulesCid, _)] <- query @SimpleTokenRules admin
+  _ <- submitMulti [admin, owner] [] $ exerciseCmd rulesCid Mint with
+    owner = owner
+    amount = 1000.0
+    couponRate = 0.05
+    maturityDate = date 2026 Dec 31
+    description = "Corporate Bond Series A"
+    instrumentId = registry.instrumentId
+  checkBalance owner registry.instrumentId 1000.0
+
+-- Test 2: Non-admin cannot mint
+test_mintNonAdminFails : Script ()
+test_mintNonAdminFails = do
+  TestEnv{..} <- setupTestEnv
+  let admin = registry.admin
+  [(rulesCid, _)] <- query @SimpleTokenRules admin
+  submitMustFail parties.alice $ exerciseCmd rulesCid Mint with
+    owner = parties.bob
+    amount = 1000.0
+    couponRate = 0.05
+    maturityDate = date 2026 Dec 31
+    description = "Corporate Bond"
+    instrumentId = registry.instrumentId
+
+-- Test 3: Mint with zero amount fails
+test_mintZeroAmountFails : Script ()
+test_mintZeroAmountFails = do
+  TestEnv{..} <- setupTestEnv
+  let admin = registry.admin
+  [(rulesCid, _)] <- query @SimpleTokenRules admin
+  submitMustFail admin $ exerciseCmd rulesCid Mint with
+    owner = parties.alice
+    amount = 0.0
+    couponRate = 0.05
+    maturityDate = date 2026 Dec 31
+    description = "Zero coupon bond"
+    instrumentId = registry.instrumentId
+
+-- Test 4: Owner transfers bond to another party
+test_transfer : Script ()
+test_transfer = do
+  TestEnv{..} <- setupTestEnv
+  let admin = registry.admin
+      alice = parties.alice
+      bob = parties.bob
+  [(rulesCid, _)] <- query @SimpleTokenRules admin
+  bondCid <- submitMulti [admin, alice] [] $ exerciseCmd rulesCid Mint with
+    owner = alice
+    amount = 1000.0
+    couponRate = 0.05
+    maturityDate = date 2026 Dec 31
+    description = "Corporate Bond"
+    instrumentId = registry.instrumentId
+  _ <- submitMulti [alice, bob] [] $ exerciseCmd bondCid TransferOwnership with
+    newOwner = bob
+  checkBalance bob registry.instrumentId 1000.0
+  checkBalance alice registry.instrumentId 0.0
+
+-- Test 5: Non-owner cannot transfer
+test_nonOwnerCannotTransfer : Script ()
+test_nonOwnerCannotTransfer = do
+  TestEnv{..} <- setupTestEnv
+  let admin = registry.admin
+      alice = parties.alice
+      bob = parties.bob
+  [(rulesCid, _)] <- query @SimpleTokenRules admin
+  bondCid <- submitMulti [admin, alice] [] $ exerciseCmd rulesCid Mint with
+    owner = alice
+    amount = 1000.0
+    couponRate = 0.05
+    maturityDate = date 2026 Dec 31
+    description = "Corporate Bond"
+    instrumentId = registry.instrumentId
+  submitMustFail bob $ exerciseCmd bondCid TransferOwnership with
+    newOwner = parties.charlie
+
+-- Test 6: Owner burns their bond
+test_burn : Script ()
+test_burn = do
+  TestEnv{..} <- setupTestEnv
+  let admin = registry.admin
+      alice = parties.alice
+  [(rulesCid, _)] <- query @SimpleTokenRules admin
+  bondCid <- submitMulti [admin, alice] [] $ exerciseCmd rulesCid Mint with
+    owner = alice
+    amount = 1000.0
+    couponRate = 0.05
+    maturityDate = date 2026 Dec 31
+    description = "Corporate Bond"
+    instrumentId = registry.instrumentId
+  submit alice $ exerciseCmd bondCid Burn
+  checkBalance alice registry.instrumentId 0.0
+
+-- Test 7: Admin burns a bond
+test_burnByAdmin : Script ()
+test_burnByAdmin = do
+  TestEnv{..} <- setupTestEnv
+  let admin = registry.admin
+      alice = parties.alice
+  [(rulesCid, _)] <- query @SimpleTokenRules admin
+  bondCid <- submitMulti [admin, alice] [] $ exerciseCmd rulesCid Mint with
+    owner = alice
+    amount = 1000.0
+    couponRate = 0.05
+    maturityDate = date 2026 Dec 31
+    description = "Corporate Bond"
+    instrumentId = registry.instrumentId
+  submit admin $ exerciseCmd bondCid BurnByAdmin
+  checkBalance alice registry.instrumentId 0.0
+
+-- Test 8: Non-owner cannot burn
+test_nonOwnerCannotBurn : Script ()
+test_nonOwnerCannotBurn = do
+  TestEnv{..} <- setupTestEnv
+  let admin = registry.admin
+      alice = parties.alice
+      bob = parties.bob
+  [(rulesCid, _)] <- query @SimpleTokenRules admin
+  bondCid <- submitMulti [admin, alice] [] $ exerciseCmd rulesCid Mint with
+    owner = alice
+    amount = 1000.0
+    couponRate = 0.05
+    maturityDate = date 2026 Dec 31
+    description = "Corporate Bond"
+    instrumentId = registry.instrumentId
+  submitMustFail bob $ exerciseCmd bondCid Burn
+
+-- Test 9: Full lifecycle: mint -> transfer -> burn
+test_mintTransferBurn : Script ()
+test_mintTransferBurn = do
+  TestEnv{..} <- setupTestEnv
+  let admin = registry.admin
+      alice = parties.alice
+      bob = parties.bob
+  [(rulesCid, _)] <- query @SimpleTokenRules admin
+  bondCid <- submitMulti [admin, alice] [] $ exerciseCmd rulesCid Mint with
+    owner = alice
+    amount = 5000.0
+    couponRate = 0.03
+    maturityDate = date 2028 Jun 15
+    description = "Government Bond"
+    instrumentId = registry.instrumentId
+  checkBalance alice registry.instrumentId 5000.0
+  bondCid' <- submitMulti [alice, bob] [] $ exerciseCmd bondCid TransferOwnership with
+    newOwner = bob
+  checkBalance bob registry.instrumentId 5000.0
+  checkBalance alice registry.instrumentId 0.0
+  submit bob $ exerciseCmd bondCid' Burn
+  checkBalance bob registry.instrumentId 0.0

@@ -1,0 +1,86 @@
+-- | Holdings for the simple token standard implementation.
+-- SimpleHolding: unlocked holding with bond-specific fields.
+-- LockedSimpleHolding: locked holding with admin-only lock holder and extraObservers.
+module SimpleToken.Holding where
+
+import Splice.Api.Token.HoldingV1
+import Splice.Api.Token.MetadataV1
+
+-- | A simple, unlocked holding of a bond instrument.
+template SimpleHolding
+  with
+    admin : Party
+    owner : Party
+    instrumentId : InstrumentId
+    amount : Decimal
+    couponRate : Decimal
+    maturityDate : Date
+    description : Text
+    meta : Metadata
+  where
+    signatory admin, owner
+    ensure amount > 0.0
+
+    choice TransferOwnership
+      : ContractId SimpleHolding
+      with
+        newOwner : Party
+      controller owner, newOwner
+      do
+        create this with owner = newOwner
+
+    nonconsuming choice Burn : ()
+      controller owner
+      do
+        archive self
+
+    nonconsuming choice BurnByAdmin : ()
+      controller admin
+      do
+        archive self
+
+    interface instance Holding for SimpleHolding where
+      view = HoldingView with
+        owner
+        instrumentId
+        amount
+        lock = None
+        meta
+
+-- | A locked holding. Lock holders must be [admin] only.
+-- The lock has an absolute expiry time.
+-- Extra observers allow the transfer receiver or allocation executor to see this contract.
+template LockedSimpleHolding
+  with
+    admin : Party
+    owner : Party
+    instrumentId : InstrumentId
+    amount : Decimal
+    couponRate : Decimal
+    maturityDate : Date
+    description : Text
+    lock : Lock
+    extraObservers : [Party]
+    meta : Metadata
+  where
+    signatory admin, owner, lock.holders
+    observer extraObservers
+    ensure amount > 0.0
+
+    -- | Owner can unlock a holding whose lock has expired.
+    choice LockedSimpleHolding_Unlock : ContractId SimpleHolding
+      controller owner
+      do
+        now <- getTime
+        case lock.expiresAt of
+          None -> fail "Lock has no expiry and cannot be owner-expired"
+          Some t -> assertMsg "Lock has not yet expired" (now >= t)
+        create SimpleHolding with admin; owner; instrumentId; amount; couponRate; maturityDate; description; meta
+
+    interface instance Holding for LockedSimpleHolding where
+      view = HoldingView with
+        owner
+        instrumentId
+        amount
+        lock = Some lock
+        meta
