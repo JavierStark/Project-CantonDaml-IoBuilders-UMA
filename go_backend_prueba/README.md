@@ -60,9 +60,9 @@ El bootstrap inicializa el synchronizer y conecta los nodos.
 ```
 curl http://127.0.0.1:5013/v2/state/ledger-end
 ```
-Deberias ver `{"offset":0}` la primera vez.
+`{"offset":19}` confirma que el JSON Ledger API v2 del participant esta vivo y ya hay actividad en el ledger (bootstrap, etc.)
 
-### Iniciar el backend Go
+### Iniciar el backend Go (carpeta raíz proyecto)
 
 ```
 go run ./cmd/server
