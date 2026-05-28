@@ -20,10 +20,24 @@ En ese ejemplo:
 Este backend usa **JSON Ledger API** por simplicidad.
 
 ## Estructura
-- `cmd/server/main.go` servidor HTTP
-- `internal/config/config.go` configuracion por variables de entorno
-- `internal/ledger/client.go` cliente HTTP al JSON Ledger API
-- `internal/httpapi/server.go` endpoints REST
+
+```text
+go_backend_prueba/
+├── cmd/
+│   └── server/
+│       └── main.go               # servidor HTTP
+├── internal/
+│   ├── config/
+│   │   └── config.go             # configuracion por variables de entorno
+│   ├── httpapi/
+│   │   └── server.go             # endpoints REST
+│   └── ledger/
+│       └── client.go             # cliente HTTP al JSON Ledger API
+└── daml/
+    ├── daml.yaml
+    └── Loan/
+        └── Main.daml
+```
 
 ## Configuracion (variables de entorno)
 
@@ -31,7 +45,7 @@ Este backend usa **JSON Ledger API** por simplicidad.
 CANTON_LEDGER_API_HOST=127.0.0.1
 CANTON_LEDGER_API_PORT=5013
 CANTON_USER_ID=ledger-api-user
-CANTON_PARTY=Issuer
+CANTON_PARTY=<Issuer PartyId>
 TEMPLATE_BOND=#Loan.Main:DebtInstrument
 CHOICE_SETTLE=AtomicSettlement
 HTTP_HOST=127.0.0.1
@@ -41,7 +55,7 @@ REQUEST_TIMEOUT=10s
 
 Notas:
 - `TEMPLATE_BOND` debe coincidir con el template de tu DAML.
-- `CANTON_PARTY` es el party que firma los comandos.
+- `CANTON_PARTY` es el party que firma los comandos. Usa el PartyId completo que devuelve Canton (por ejemplo `Issuer::1220...`).
 - Si activas TLS, este ejemplo debe cambiar a gRPC con certificados.
 
 ## Ejecutar
@@ -61,6 +75,34 @@ El bootstrap inicializa el synchronizer y conecta los nodos.
 curl http://127.0.0.1:5013/v2/state/ledger-end
 ```
 `{"offset":19}` confirma que el JSON Ledger API v2 del participant esta vivo y ya hay actividad en el ledger (bootstrap, etc.)
+
+### Parties
+
+Para que los ejemplos funcionen, necesitas parties. Canton devuelve un PartyId completo (por ejemplo `Issuer::1220...`) y ese es el valor que debes usar en `CANTON_PARTY` y en los payloads.
+
+Crear parties (JSON API):
+
+```bash
+curl -X POST http://127.0.0.1:5013/v2/parties \
+  -H "Content-Type: application/json" \
+  -d '{"partyIdHint":"Issuer"}'
+
+curl -X POST http://127.0.0.1:5013/v2/parties \
+  -H "Content-Type: application/json" \
+  -d '{"partyIdHint":"Investor"}'
+```
+
+Parties creadas en esta maquina (ejemplo real):
+- `Issuer::1220aeeeffa894d69b10260e351d3289837a089531d9fc79cef1c53161583243873e`
+- `Investor::1220aeeeffa894d69b10260e351d3289837a089531d9fc79cef1c53161583243873e`
+
+Listar parties:
+
+```bash
+curl http://127.0.0.1:5013/v2/parties
+```
+
+Nota: con `storage.type = memory` (config de ejemplo), si reinicias Canton puedes tener que recrear parties y re-subir el DAR.
 
 ### Iniciar el backend Go (carpeta raíz proyecto)
 
@@ -89,6 +131,8 @@ Desde la carpeta `daml`:
 cd /home/rgb/Documentos/UNIVERSIDAD/Curso_Blockchain/go_backend_prueba/daml
 daml build
 ```
+
+Nota: si ya tienes DPM instalado, el equivalente actualizado es `dpm build`.
 
 Se genera un `.dar` en:
 ```
@@ -128,8 +172,8 @@ Body:
 {
   "commandId": "bond-1",
   "args": {
-    "issuer": "Issuer",
-    "owner": "Investor",
+    "issuer": "<Issuer PartyId>",
+    "owner": "<Investor PartyId>",
     "notional": "1000",
     "currency": "USD"
   }
@@ -140,7 +184,7 @@ Ejemplo para crear el USDC de prueba:
 ```
 curl -s http://127.0.0.1:8080/bonds \
   -H "Content-Type: application/json" \
-  -d '{"commandId":"usdc-1","args":{"issuer":"Issuer","owner":"Investor","amount":"1000"}}'
+  -d '{"commandId":"usdc-1","args":{"issuer":"<Issuer PartyId>","owner":"<Investor PartyId>","amount":"1000"}}'
 ```
 
 ### Liquidacion atomica
@@ -162,9 +206,11 @@ Body:
 ## Notas de integracion con DAML
 
 1. Compila el DAML y sube el DAR al participant.
-2. Crea parties (`Issuer`, `Investor`, `USDCIssuer`).
+2. Crea parties (`Issuer`, `Investor`) y usa el PartyId completo (`Issuer::...`).
 3. Ajusta `TEMPLATE_BOND` a `#Loan.Main:DebtInstrument`.
 4. Ajusta los argumentos segun el template (ver ejemplo arriba).
+
+Nota: el template `USDC` tiene `signatory issuer, owner`. Si `issuer != owner`, crear ese contrato requiere firma de ambas partes; este backend es minimalista y firma con un solo `CANTON_PARTY`.
 
 ## Proximos pasos a seguir
 1. Reemplazar JSON Ledger API por gRPC Ledger API (mas tipado y robusto).
