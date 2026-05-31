@@ -130,6 +130,7 @@ func (s *Server) handleParties(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var allParties []partyEntry
+	seen := make(map[string]bool)
 	for _, p := range s.cfg.Participants {
 		client := s.clients[p.Name]
 		parties, err := client.Parties(ctx)
@@ -138,6 +139,13 @@ func (s *Server) handleParties(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		for _, party := range parties {
+			if !party.IsLocal {
+				continue
+			}
+			if seen[party.Party] {
+				continue
+			}
+			seen[party.Party] = true
 			allParties = append(allParties, partyEntry{
 				Identifier:  party.Party,
 				DisplayName: party.DisplayName,
@@ -234,7 +242,10 @@ func (s *Server) handleListHoldings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events := ledger.ExtractCreatedEvents(resp)
+	events := ledger.ExtractCreatedEvents(resp,
+		ledger.TemplateSimpleHolding,
+		ledger.TemplateLockedSimpleHolding,
+	)
 
 	type holdingView struct {
 		ContractID   string  `json:"contractId"`
@@ -360,9 +371,9 @@ func (s *Server) handleMint(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events := ledger.ExtractCreatedEvents(resp)
+	events := ledger.ExtractCreatedEvents(resp, ledger.TemplateSimpleTokenRules)
 	if len(events) == 0 {
-		writeError(w, http.StatusNotFound, "no SimpleTokenRules factory found. Create one via POST /api/v1/factory")
+		writeError(w, http.StatusNotFound, "no SimpleTokenRules factory found. Create one via GET or POST /api/v1/factory")
 		return
 	}
 
@@ -469,7 +480,7 @@ func (s *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "failed to query factory")
 		return
 	}
-	factoryEvents := ledger.ExtractCreatedEvents(factoryResp)
+	factoryEvents := ledger.ExtractCreatedEvents(factoryResp, ledger.TemplateSimpleTokenRules)
 	if len(factoryEvents) == 0 {
 		writeError(w, http.StatusNotFound, "no SimpleTokenRules factory found")
 		return
@@ -482,7 +493,10 @@ func (s *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadGateway, "failed to query holdings")
 		return
 	}
-	holdingsEvents := ledger.ExtractCreatedEvents(holdingsResp)
+	holdingsEvents := ledger.ExtractCreatedEvents(holdingsResp,
+		ledger.TemplateSimpleHolding,
+		ledger.TemplateLockedSimpleHolding,
+	)
 
 	var inputCIDs []string
 	remaining := req.Amount
@@ -773,7 +787,7 @@ func (s *Server) handleListTransferInstructions(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	events := ledger.ExtractCreatedEvents(resp)
+	events := ledger.ExtractCreatedEvents(resp, ledger.TemplateSimpleTransferInstruction)
 
 	type transferView struct {
 		ContractID string  `json:"contractId"`
@@ -853,7 +867,7 @@ func (s *Server) handleFactory(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	events := ledger.ExtractCreatedEvents(resp)
+	events := ledger.ExtractCreatedEvents(resp, ledger.TemplateSimpleTokenRules)
 	if len(events) == 0 {
 		// No factory found, create one
 		adminID, err := s.lookupPartyIdentifier(ctx, client, "admin")

@@ -59,26 +59,45 @@ async function loadPageData(page) {
 
 async function loadDashboard() {
     try {
-        const [h, pts, pends] = await Promise.all([
+        const [h, pts] = await Promise.all([
             api('/holdings?party=admin'),
             api('/parties'),
-            loadPendingData(),
         ]);
         parties = pts;
+        const pends = await loadPendingData(parties);
         pendingTransfers = pends;
 
-        let allHoldings = h;
+        const byContract = new Map();
+        for (const row of h) {
+            byContract.set(row.contractId, {
+                ...row,
+                observedViaParticipants: ['participant1'],
+            });
+        }
+
         // Also get other parties' holdings
-        for (const p of parties) {
+        for (const p of uniqueParties(parties)) {
             const token = partyToken(p);
             if (token !== 'admin') {
                 try {
                     const more = await api(`/holdings?party=${token}`);
-                    allHoldings = allHoldings.concat(more);
+                    for (const row of more) {
+                        const existing = byContract.get(row.contractId);
+                        if (!existing) {
+                            byContract.set(row.contractId, {
+                                ...row,
+                                observedViaParticipants: [p.participant],
+                            });
+                            continue;
+                        }
+                        if (!existing.observedViaParticipants.includes(p.participant)) {
+                            existing.observedViaParticipants.push(p.participant);
+                        }
+                    }
                 } catch (_) {}
             }
         }
-        holdings = allHoldings;
+        holdings = Array.from(byContract.values());
 
         const totalValue = holdings.reduce((sum, h) => sum + (h.locked ? 0 : h.amount), 0);
         $('statTotalBonds').textContent = holdings.filter(h => !h.locked).length;
@@ -97,17 +116,29 @@ async function loadDashboard() {
 async function loadHoldings() {
     try {
         const filter = $('holdingsFilter').value;
-        let all = [];
-        for (const p of parties) {
+        const byContract = new Map();
+        for (const p of uniqueParties(parties)) {
             const token = partyToken(p);
             if (filter && token !== filter) continue;
             try {
                 const h = await api(`/holdings?party=${token}`);
-                all = all.concat(h);
+                for (const row of h) {
+                    const existing = byContract.get(row.contractId);
+                    if (!existing) {
+                        byContract.set(row.contractId, {
+                            ...row,
+                            observedViaParticipants: [p.participant],
+                        });
+                        continue;
+                    }
+                    if (!existing.observedViaParticipants.includes(p.participant)) {
+                        existing.observedViaParticipants.push(p.participant);
+                    }
+                }
             } catch (_) {}
         }
-        holdings = all;
-        renderHoldingsTable('holdingsList', holdings);
+        holdings = Array.from(byContract.values());
+        renderHoldingsTable('holdingsList', holdings, false, true);
     } catch (err) {
         $('holdingsList').innerHTML = `<p class="error">${err.message}</p>`;
     }
@@ -123,19 +154,23 @@ async function loadPending() {
     }
 }
 
-async function loadPendingData() {
-    let all = [];
-    for (const p of parties) {
+async function loadPendingData(partyList = parties) {
+    const byContract = new Map();
+    for (const p of uniqueParties(partyList)) {
         const token = partyToken(p);
         if (!token) continue;
         try {
             const t = await api(`/transfer-instructions?party=${token}`);
-            all = all.concat(t);
+            for (const row of t) {
+                if (!byContract.has(row.contractId)) {
+                    byContract.set(row.contractId, row);
+                }
+            }
         } catch (err) {
             console.warn(`Failed to load pending transfers for ${token}:`, err);
         }
     }
-    return all;
+    return Array.from(byContract.values());
 }
 
 async function loadBurnHoldings() {
@@ -159,7 +194,7 @@ async function loadParties() {
     }
 }
 
-function renderHoldingsTable(containerId, data, clickToFill = false) {
+function renderHoldingsTable(containerId, data, clickToFill = false, showObservedVia = false) {
     const el = $(containerId);
     if (!data.length) {
         el.innerHTML = '<p>No holdings found.</p>';
@@ -167,9 +202,11 @@ function renderHoldingsTable(containerId, data, clickToFill = false) {
     }
     let html = `<table><thead><tr>
         <th>Owner</th><th>Amount</th><th>Coupon</th><th>Maturity</th><th>Description</th><th>Status</th>
+        ${showObservedVia ? '<th>Observed Via</th>' : ''}
         ${clickToFill ? '<th>Action</th>' : ''}
     </tr></thead><tbody>`;
     for (const h of data) {
+        const observedVia = (h.observedViaParticipants || []).join(', ') || '-';
         html += `<tr>
             <td>${shortName(h.owner)}</td>
             <td>${h.amount}</td>
@@ -177,6 +214,7 @@ function renderHoldingsTable(containerId, data, clickToFill = false) {
             <td>${h.maturityDate}</td>
             <td>${h.description || '-'}</td>
             <td>${h.locked ? '<span class="badge badge-locked">Locked</span>' : '<span class="badge badge-active">Active</span>'}</td>
+            ${showObservedVia ? `<td>${observedVia}</td>` : ''}
             ${clickToFill ? `<td><button class="btn-small" onclick="fillBurn('${h.contractId}')">Select</button></td>` : ''}
         </tr>`;
     }
@@ -241,14 +279,27 @@ function partyToken(p) {
     return shortName(p.identifier);
 }
 
+function uniqueParties(list) {
+    const unique = [];
+    const seen = new Set();
+    for (const p of list || []) {
+        const token = partyToken(p);
+        if (!token || seen.has(token)) continue;
+        seen.add(token);
+        unique.push(p);
+    }
+    return unique;
+}
+
 function populatePartySelects() {
     const selects = ['mintAdmin', 'mintOwner', 'transferSender', 'transferReceiver', 'burnParty', 'holdingsFilter', 'pendingFilter'];
+    const unique = uniqueParties(parties);
     for (const id of selects) {
         const sel = $(id);
         if (!sel) continue;
         const current = sel.value;
         sel.innerHTML = id === 'holdingsFilter' || id === 'pendingFilter' ? '<option value="">All</option>' : '';
-        for (const p of parties) {
+        for (const p of unique) {
             const token = partyToken(p);
             const opt = document.createElement('option');
             opt.value = token;
