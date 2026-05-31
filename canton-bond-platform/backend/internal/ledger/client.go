@@ -246,7 +246,7 @@ func ExtractCreatedEvents(resp activeContractsResponse, filterTemplates ...strin
 		if ok {
 			if len(filterTemplates) > 0 {
 				for _, ft := range filterTemplates {
-					if ce.TemplateID == ft || (ft != "" && strings.Contains(ce.TemplateID, ft)) {
+					if templateIDMatches(ce.TemplateID, ft) {
 						events = append(events, ce)
 						break
 					}
@@ -257,6 +257,23 @@ func ExtractCreatedEvents(resp activeContractsResponse, filterTemplates ...strin
 		}
 	}
 	return events
+}
+
+func templateIDMatches(actual, expected string) bool {
+	if actual == expected {
+		return true
+	}
+	if expected == "" || actual == "" {
+		return false
+	}
+	return templateIDTail(actual) == templateIDTail(expected)
+}
+
+func templateIDTail(id string) string {
+	if idx := strings.Index(id, ":"); idx >= 0 && idx+1 < len(id) {
+		return id[idx+1:]
+	}
+	return id
 }
 
 func extractCreatedEvent(entry map[string]any) (CreatedEvent, bool) {
@@ -356,23 +373,23 @@ func (e CreatedEvent) IsLocked() bool {
 
 // DAML template IDs used in the bond contract.
 const (
-	TemplateSimpleTokenRules           = "#simple-token:SimpleToken.Rules:SimpleTokenRules"
-	TemplateSimpleHolding              = "#simple-token:SimpleToken.Holding:SimpleHolding"
-	TemplateLockedSimpleHolding        = "#simple-token:SimpleToken.Holding:LockedSimpleHolding"
-	TemplateSimpleTransferInstruction  = "#simple-token:SimpleToken.TransferInstruction:SimpleTransferInstruction"
-	TemplateSimpleAllocation           = "#simple-token:SimpleToken.Allocation:SimpleAllocation"
-	TemplateTransferFactory            = "55ba4deb0ad4662c4168b39859738a0e91388d252286480c7331b3f71a517281:Splice.Api.Token.TransferInstructionV1:TransferFactory"
-	TemplateTransferInstruction        = "55ba4deb0ad4662c4168b39859738a0e91388d252286480c7331b3f71a517281:Splice.Api.Token.TransferInstructionV1:TransferInstruction"
+	TemplateSimpleTokenRules          = "#simple-token:SimpleToken.Rules:SimpleTokenRules"
+	TemplateSimpleHolding             = "#simple-token:SimpleToken.Holding:SimpleHolding"
+	TemplateLockedSimpleHolding       = "#simple-token:SimpleToken.Holding:LockedSimpleHolding"
+	TemplateSimpleTransferInstruction = "#simple-token:SimpleToken.TransferInstruction:SimpleTransferInstruction"
+	TemplateSimpleAllocation          = "#simple-token:SimpleToken.Allocation:SimpleAllocation"
+	TemplateTransferFactory           = "55ba4deb0ad4662c4168b39859738a0e91388d252286480c7331b3f71a517281:Splice.Api.Token.TransferInstructionV1:TransferFactory"
+	TemplateTransferInstruction       = "55ba4deb0ad4662c4168b39859738a0e91388d252286480c7331b3f71a517281:Splice.Api.Token.TransferInstructionV1:TransferInstruction"
 
-	ChoiceMint                  = "Mint"
-	ChoiceTransferOwnership     = "TransferOwnership"
-	ChoiceBurn                  = "Burn"
-	ChoiceBurnByAdmin           = "BurnByAdmin"
-	ChoiceTransferFactoryTransfer = "TransferFactory_Transfer"
-	ChoiceTransferInstructionAccept = "TransferInstruction_Accept"
-	ChoiceTransferInstructionReject = "TransferInstruction_Reject"
+	ChoiceMint                        = "Mint"
+	ChoiceTransferOwnership           = "TransferOwnership"
+	ChoiceBurn                        = "Burn"
+	ChoiceBurnByAdmin                 = "BurnByAdmin"
+	ChoiceTransferFactoryTransfer     = "TransferFactory_Transfer"
+	ChoiceTransferInstructionAccept   = "TransferInstruction_Accept"
+	ChoiceTransferInstructionReject   = "TransferInstruction_Reject"
 	ChoiceTransferInstructionWithdraw = "TransferInstruction_Withdraw"
-	ChoiceLockedSimpleHoldingUnlock = "LockedSimpleHolding_Unlock"
+	ChoiceLockedSimpleHoldingUnlock   = "LockedSimpleHolding_Unlock"
 )
 
 // DamlDecimal encodes a float64 as a Daml-LF decimal string (e.g., "1000.0000000000").
