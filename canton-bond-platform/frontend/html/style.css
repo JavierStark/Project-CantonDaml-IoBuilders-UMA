@@ -51,14 +51,22 @@ nav a:hover, nav a.active {
     background: rgba(255,255,255,0.15);
 }
 
-.status-badge {
+.header-actions {
     margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+}
+
+.status-badge {
     padding: 0.3rem 0.8rem;
     border-radius: 20px;
     font-size: 0.8rem;
     background: rgba(255,255,255,0.2);
 }
 
+.status-badge.locked { background: #5f6368; }
 .status-badge.connected { background: var(--success); }
 .status-badge.error { background: var(--danger); }
 
@@ -144,6 +152,24 @@ button {
 button:hover { background: var(--primary-hover); }
 button:disabled { opacity: 0.6; cursor: not-allowed; }
 
+.btn-secondary {
+    background: rgba(255,255,255,0.95);
+    color: var(--primary);
+}
+
+.btn-secondary:hover { background: #e8f0fe; }
+
+body.factory-locked nav a {
+    pointer-events: none;
+    opacity: 0.5;
+}
+
+body.factory-locked main {
+    opacity: 0.55;
+    pointer-events: none;
+    user-select: none;
+}
+
 .btn-danger { background: var(--danger); }
 .btn-danger:hover { background: var(--danger-hover); }
 
@@ -211,7 +237,8 @@ footer {
 
 @media (max-width: 768px) {
     header { flex-direction: column; align-items: flex-start; }
-    .status-badge { margin-left: 0; }
+    .header-actions { margin-left: 0; width: 100%; }
+    .status-badge { width: 100%; }
     main { padding: 1rem; }
     .stats-grid { grid-template-columns: 1fr 1fr; }
 }

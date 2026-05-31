@@ -3,6 +3,8 @@ let parties = [];
 let holdings = [];
 let pendingTransfers = [];
 let selectedParty = null;
+let factoryReady = false;
+let currentPage = 'dashboard';
 
 function $(id) { return document.getElementById(id); }
 
@@ -32,20 +34,37 @@ function hideResult(el) {
     el.className = 'result';
 }
 
+function setFactoryLocked(locked, message) {
+    factoryReady = !locked;
+    document.body.classList.toggle('factory-locked', locked);
+    const startBtn = $('startFactoryBtn');
+    if (startBtn) startBtn.disabled = !locked;
+    updateStatus(locked ? 'locked' : 'ready', message);
+}
+
+function requireFactoryReady(resultEl) {
+    if (factoryReady) return true;
+    if (resultEl) showResult(resultEl, 'Press Start Factory first.', true);
+    return false;
+}
+
 // Navigation
 document.querySelectorAll('nav a').forEach(a => {
     a.addEventListener('click', e => {
         e.preventDefault();
+        if (!factoryReady) return;
         document.querySelectorAll('nav a').forEach(x => x.classList.remove('active'));
         a.classList.add('active');
         document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
         const page = $('page-' + a.dataset.page);
         if (page) page.classList.add('active');
+        currentPage = a.dataset.page;
         loadPageData(a.dataset.page);
     });
 });
 
 async function loadPageData(page) {
+    if (!factoryReady) return;
     switch (page) {
         case 'dashboard': loadDashboard(); break;
         case 'holdings': loadHoldings(); break;
@@ -313,9 +332,15 @@ function populatePartySelects() {
 function updateStatus(state, msg) {
     const badge = $('statusBadge');
     badge.className = 'status-badge';
-    if (state === 'connected') {
+    if (state === 'ready') {
         badge.classList.add('connected');
-        badge.textContent = '✅ Connected';
+        badge.textContent = '✅ ' + (msg || 'Factory ready');
+    } else if (state === 'connected') {
+        badge.classList.add('connected');
+        badge.textContent = '✅ ' + (msg || 'Connected');
+    } else if (state === 'locked') {
+        badge.classList.add('locked');
+        badge.textContent = msg || '⏳ Factory not started - press Start Factory';
     } else if (state === 'error') {
         badge.classList.add('error');
         badge.textContent = '❌ ' + (msg || 'Error');
@@ -337,6 +362,7 @@ $('mintForm').addEventListener('submit', async e => {
     const btn = e.target.querySelector('button');
     const result = $('mintResult');
     hideResult(result);
+    if (!requireFactoryReady(result)) return;
     btn.disabled = true;
     try {
         const data = await api('/mint', {
@@ -365,6 +391,7 @@ $('transferForm').addEventListener('submit', async e => {
     const btn = e.target.querySelector('button');
     const result = $('transferResult');
     hideResult(result);
+    if (!requireFactoryReady(result)) return;
     btn.disabled = true;
     try {
         const data = await api('/transfer', {
@@ -438,6 +465,7 @@ $('burnForm').addEventListener('submit', async e => {
     const btn = e.target.querySelector('button');
     const result = $('burnResult');
     hideResult(result);
+    if (!requireFactoryReady(result)) return;
     btn.disabled = true;
     try {
         const data = await api('/burn', {
@@ -463,6 +491,7 @@ $('partyForm').addEventListener('submit', async e => {
     const btn = e.target.querySelector('button');
     const result = $('partyResult');
     hideResult(result);
+    if (!requireFactoryReady(result)) return;
     btn.disabled = true;
     try {
         const data = await api('/parties', {
@@ -486,20 +515,34 @@ $('holdingsFilter').addEventListener('change', loadHoldings);
 $('pendingFilter').addEventListener('change', loadPending);
 $('burnParty').addEventListener('change', loadBurnHoldings);
 
+// Factory bootstrap
+$('startFactoryBtn').addEventListener('click', async () => {
+    const btn = $('startFactoryBtn');
+    btn.disabled = true;
+    updateStatus('connecting', 'Starting factory...');
+    try {
+        const data = await api('/factory', { method: 'POST' });
+        setFactoryLocked(false, data.status === 'created' ? 'Factory ready' : 'Factory ready');
+        await loadParties();
+        await loadDashboard();
+        if (currentPage !== 'dashboard') {
+            loadPageData(currentPage);
+        }
+    } catch (err) {
+        setFactoryLocked(true, 'Factory not started - press Start Factory');
+        updateStatus('error', err.message);
+        btn.disabled = false;
+    }
+});
+
 // Init
 (async function init() {
     try {
         await api('/health');
-        // Ensure the SimpleTokenRules factory exists before user actions.
-        await api('/factory');
-        await loadParties();
-        await loadDashboard();
+        setFactoryLocked(true, 'Factory not started - press Start Factory');
+        $('dashboardHoldings').innerHTML = '<p class="loading">Press Start Factory to initialize the ledger.</p>';
     } catch (err) {
         updateStatus('error', err.message);
-        // Retry after 3 seconds
-        setTimeout(() => {
-            $('statusBadge').textContent = '⏳ Retrying...';
-            init();
-        }, 3000);
+        setFactoryLocked(true, 'Factory not started - press Start Factory');
     }
 })();
