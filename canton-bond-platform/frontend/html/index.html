@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bond Platform</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header>
+        <h1>Bond Platform</h1>
+        <nav>
+            <a href="#" data-page="dashboard" class="active">Dashboard</a>
+            <a href="#" data-page="mint">Mint</a>
+            <a href="#" data-page="holdings">Holdings</a>
+            <a href="#" data-page="transfer">Transfer</a>
+            <a href="#" data-page="pending">Pending</a>
+            <a href="#" data-page="burn">Burn</a>
+            <a href="#" data-page="parties">Parties</a>
+        </nav>
+        <div class="status-badge" id="statusBadge">⏳ Connecting...</div>
+    </header>
+
+    <main>
+        <section id="page-dashboard" class="page active">
+            <h2>Dashboard</h2>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <h3>Total Bonds</h3>
+                    <p id="statTotalBonds">-</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Total Value</h3>
+                    <p id="statTotalValue">-</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Active Parties</h3>
+                    <p id="statParties">-</p>
+                </div>
+                <div class="stat-card">
+                    <h3>Pending Transfers</h3>
+                    <p id="statPending">-</p>
+                </div>
+            </div>
+            <div class="card">
+                <h3>All Holdings</h3>
+                <div id="dashboardHoldings"><p class="loading">Loading...</p></div>
+            </div>
+        </section>
+
+        <section id="page-mint" class="page">
+            <h2>Mint New Bond</h2>
+            <div class="card">
+                <form id="mintForm">
+                    <div class="form-row">
+                        <label>Admin Party</label>
+                        <select id="mintAdmin" required></select>
+                    </div>
+                    <div class="form-row">
+                        <label>Owner Party</label>
+                        <select id="mintOwner" required></select>
+                    </div>
+                    <div class="form-row">
+                        <label>Amount</label>
+                        <input type="number" id="mintAmount" step="0.01" min="0.01" required>
+                    </div>
+                    <div class="form-row">
+                        <label>Coupon Rate (%)</label>
+                        <input type="number" id="mintCoupon" step="0.01" min="0" value="5.0">
+                    </div>
+                    <div class="form-row">
+                        <label>Maturity Date</label>
+                        <input type="date" id="mintMaturity" required>
+                    </div>
+                    <div class="form-row">
+                        <label>Description (ISIN)</label>
+                        <input type="text" id="mintDescription" placeholder="e.g. Corporate Bond A" required>
+                    </div>
+                    <button type="submit">Mint Bond</button>
+                </form>
+                <div id="mintResult" class="result"></div>
+            </div>
+        </section>
+
+        <section id="page-holdings" class="page">
+            <h2>Holdings</h2>
+            <div class="card">
+                <div class="filter-row">
+                    <label>Filter by party:</label>
+                    <select id="holdingsFilter">
+                        <option value="">All Parties</option>
+                    </select>
+                </div>
+                <div id="holdingsList"><p class="loading">Loading...</p></div>
+            </div>
+        </section>
+
+        <section id="page-transfer" class="page">
+            <h2>Transfer Bond</h2>
+            <div class="card">
+                <form id="transferForm">
+                    <div class="form-row">
+                        <label>From (Sender)</label>
+                        <select id="transferSender" required></select>
+                    </div>
+                    <div class="form-row">
+                        <label>To (Receiver)</label>
+                        <select id="transferReceiver" required></select>
+                    </div>
+                    <div class="form-row">
+                        <label>Amount</label>
+                        <input type="number" id="transferAmount" step="0.01" min="0.01" required>
+                    </div>
+                    <button type="submit">Initiate Transfer</button>
+                </form>
+                <div id="transferResult" class="result"></div>
+            </div>
+        </section>
+
+        <section id="page-pending" class="page">
+            <h2>Pending Transfers</h2>
+            <div class="card">
+                <div class="filter-row">
+                    <label>Filter by party:</label>
+                    <select id="pendingFilter">
+                        <option value="">All</option>
+                    </select>
+                </div>
+                <div id="pendingList"><p class="loading">Loading...</p></div>
+            </div>
+        </section>
+
+        <section id="page-burn" class="page">
+            <h2>Burn Bond</h2>
+            <div class="card">
+                <form id="burnForm">
+                    <div class="form-row">
+                        <label>Party</label>
+                        <select id="burnParty" required></select>
+                    </div>
+                    <div class="form-row">
+                        <label>Contract ID</label>
+                        <input type="text" id="burnContractId" placeholder="Paste contract ID" required>
+                    </div>
+                    <div class="form-row">
+                        <label class="checkbox-label">
+                            <input type="checkbox" id="burnAsAdmin"> Burn as Admin
+                        </label>
+                    </div>
+                    <button type="submit" class="btn-danger">Burn</button>
+                </form>
+                <div id="burnResult" class="result"></div>
+            </div>
+            <div class="card">
+                <h3>Your Holdings (click to auto-fill)</h3>
+                <div id="burnHoldingsList"><p class="loading">Loading...</p></div>
+            </div>
+        </section>
+
+        <section id="page-parties" class="page">
+            <h2>Parties</h2>
+            <div class="card">
+                <h3>Create Party</h3>
+                <form id="partyForm">
+                    <div class="form-row">
+                        <label>Participant</label>
+                        <select id="partyParticipant">
+                            <option value="participant1">participant1</option>
+                            <option value="participant2">participant2</option>
+                            <option value="participant3">participant3</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <label>Party Hint</label>
+                        <input type="text" id="partyHint" placeholder="e.g. investor1" required>
+                    </div>
+                    <button type="submit">Create Party</button>
+                </form>
+                <div id="partyResult" class="result"></div>
+            </div>
+            <div class="card">
+                <h3>All Parties</h3>
+                <div id="partyList"><p class="loading">Loading...</p></div>
+            </div>
+        </section>
+    </main>
+
+    <footer>
+        <p>Bond Platform &mdash; Canton DAML Bond Token</p>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>
