@@ -264,7 +264,7 @@ function renderPendingTable(data) {
             <td style="font-size:0.75rem;max-width:200px;overflow:hidden;text-overflow:ellipsis">${t.contractId}</td>
             <td>
                 <button class="btn-small btn-success" onclick="acceptTransfer('${t.contractId}', '${shortName(t.receiver)}')">Accept</button>
-                <button class="btn-small btn-danger" onclick="rejectTransfer('${t.contractId}', '${shortName(t.sender)}')">Reject</button>
+                <button class="btn-small btn-danger" onclick="rejectTransfer('${t.contractId}', '${shortName(t.receiver)}')">Reject</button>
                 <button class="btn-small" onclick="withdrawTransfer('${t.contractId}', '${shortName(t.sender)}')">Withdraw</button>
             </td>
         </tr>`;
@@ -515,23 +515,33 @@ $('holdingsFilter').addEventListener('change', loadHoldings);
 $('pendingFilter').addEventListener('change', loadPending);
 $('burnParty').addEventListener('change', loadBurnHoldings);
 
-// Factory bootstrap
+// Factory bootstrap with retry
 $('startFactoryBtn').addEventListener('click', async () => {
     const btn = $('startFactoryBtn');
     btn.disabled = true;
     updateStatus('connecting', 'Starting factory...');
-    try {
-        const data = await api('/factory', { method: 'POST' });
-        setFactoryLocked(false, data.status === 'created' ? 'Factory ready' : 'Factory ready');
-        await loadParties();
-        await loadDashboard();
-        if (currentPage !== 'dashboard') {
-            loadPageData(currentPage);
+    const maxRetries = 5;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        try {
+            const data = await api('/factory', { method: 'POST' });
+            setFactoryLocked(false, data.status === 'created' ? 'Factory ready' : 'Factory ready');
+            await loadParties();
+            await loadDashboard();
+            if (currentPage !== 'dashboard') {
+                loadPageData(currentPage);
+            }
+            return;
+        } catch (err) {
+            if (attempt < maxRetries) {
+                const delay = Math.min(2000 * Math.pow(2, attempt - 1), 10000);
+                updateStatus('connecting', `Retrying factory (${attempt}/${maxRetries})...`);
+                await new Promise(r => setTimeout(r, delay));
+            } else {
+                setFactoryLocked(true, 'Factory not started - press Start Factory');
+                updateStatus('error', err.message);
+                btn.disabled = false;
+            }
         }
-    } catch (err) {
-        setFactoryLocked(true, 'Factory not started - press Start Factory');
-        updateStatus('error', err.message);
-        btn.disabled = false;
     }
 });
 

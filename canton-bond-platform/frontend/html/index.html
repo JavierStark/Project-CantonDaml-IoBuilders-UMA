@@ -10,17 +10,17 @@
     <header>
         <h1>Bond Platform</h1>
         <nav>
-            <a href="#" data-page="dashboard" class="active">Dashboard</a>
-            <a href="#" data-page="mint">Mint</a>
-            <a href="#" data-page="holdings">Holdings</a>
-            <a href="#" data-page="transfer">Transfer</a>
-            <a href="#" data-page="pending">Pending</a>
-            <a href="#" data-page="burn">Burn</a>
-            <a href="#" data-page="parties">Parties</a>
+            <a href="#" data-page="dashboard" class="active" data-testid="nav-dashboard">Dashboard</a>
+            <a href="#" data-page="mint" data-testid="nav-mint">Mint</a>
+            <a href="#" data-page="holdings" data-testid="nav-holdings">Holdings</a>
+            <a href="#" data-page="transfer" data-testid="nav-transfer">Transfer</a>
+            <a href="#" data-page="pending" data-testid="nav-pending">Pending</a>
+            <a href="#" data-page="burn" data-testid="nav-burn">Burn</a>
+            <a href="#" data-page="parties" data-testid="nav-parties">Parties</a>
         </nav>
         <div class="header-actions">
-            <button type="button" id="startFactoryBtn" class="btn-secondary">Start Factory</button>
-            <div class="status-badge" id="statusBadge">⏳ Factory not started - press Start Factory</div>
+            <button type="button" id="startFactoryBtn" class="btn-secondary" data-testid="startFactoryBtn">Start Factory</button>
+            <div class="status-badge" id="statusBadge" data-testid="statusBadge">⏳ Factory not started - press Start Factory</div>
         </div>
     </header>
 
@@ -28,146 +28,146 @@
         <section id="page-dashboard" class="page active">
             <h2>Dashboard</h2>
             <div class="stats-grid">
-                <div class="stat-card">
+                <div class="stat-card" data-testid="stat-totalBonds">
                     <h3>Total Bonds</h3>
                     <p id="statTotalBonds">-</p>
                 </div>
-                <div class="stat-card">
+                <div class="stat-card" data-testid="stat-totalValue">
                     <h3>Total Value</h3>
                     <p id="statTotalValue">-</p>
                 </div>
-                <div class="stat-card">
+                <div class="stat-card" data-testid="stat-activeParties">
                     <h3>Active Parties</h3>
                     <p id="statParties">-</p>
                 </div>
-                <div class="stat-card">
+                <div class="stat-card" data-testid="stat-pendingTransfers">
                     <h3>Pending Transfers</h3>
                     <p id="statPending">-</p>
                 </div>
             </div>
             <div class="card">
                 <h3>All Holdings</h3>
-                <div id="dashboardHoldings"><p class="loading">Loading...</p></div>
+                <div id="dashboardHoldings" data-testid="dashboardHoldings"><p class="loading">Loading...</p></div>
             </div>
         </section>
 
-        <section id="page-mint" class="page">
+        <section id="page-mint" class="page" data-testid="page-mint">
             <h2>Mint New Bond</h2>
             <div class="card">
-                <form id="mintForm">
+                <form id="mintForm" data-testid="mintForm">
                     <div class="form-row">
                         <label>Admin Party</label>
-                        <select id="mintAdmin" required></select>
+                        <select id="mintAdmin" required data-testid="mintAdmin"></select>
                     </div>
                     <div class="form-row">
                         <label>Owner Party</label>
-                        <select id="mintOwner" required></select>
+                        <select id="mintOwner" required data-testid="mintOwner"></select>
                     </div>
                     <div class="form-row">
                         <label>Amount</label>
-                        <input type="number" id="mintAmount" step="0.01" min="0.01" required>
+                        <input type="number" id="mintAmount" step="0.01" min="0.01" required data-testid="mintAmount">
                     </div>
                     <div class="form-row">
                         <label>Coupon Rate (%)</label>
-                        <input type="number" id="mintCoupon" step="0.01" min="0" value="5.0">
+                        <input type="number" id="mintCoupon" step="0.01" min="0" value="5.0" data-testid="mintCoupon">
                     </div>
                     <div class="form-row">
                         <label>Maturity Date</label>
-                        <input type="date" id="mintMaturity" required>
+                        <input type="date" id="mintMaturity" required data-testid="mintMaturity">
                     </div>
                     <div class="form-row">
                         <label>Description (ISIN)</label>
-                        <input type="text" id="mintDescription" placeholder="e.g. Corporate Bond A" required>
+                        <input type="text" id="mintDescription" placeholder="e.g. Corporate Bond A" required data-testid="mintDescription">
                     </div>
-                    <button type="submit">Mint Bond</button>
+                    <button type="submit" data-testid="mintSubmit">Mint Bond</button>
                 </form>
-                <div id="mintResult" class="result"></div>
+                <div id="mintResult" class="result" data-testid="mintResult"></div>
             </div>
         </section>
 
-        <section id="page-holdings" class="page">
+        <section id="page-holdings" class="page" data-testid="page-holdings">
             <h2>Holdings</h2>
             <div class="card">
                 <div class="filter-row">
                     <label>Filter by party:</label>
-                    <select id="holdingsFilter">
+                    <select id="holdingsFilter" data-testid="holdingsFilter">
                         <option value="">All Parties</option>
                     </select>
                 </div>
-                <div id="holdingsList"><p class="loading">Loading...</p></div>
+                <div id="holdingsList" data-testid="holdingsList"><p class="loading">Loading...</p></div>
             </div>
         </section>
 
-        <section id="page-transfer" class="page">
+        <section id="page-transfer" class="page" data-testid="page-transfer">
             <h2>Transfer Bond</h2>
             <div class="card">
-                <form id="transferForm">
+                <form id="transferForm" data-testid="transferForm">
                     <div class="form-row">
                         <label>From (Sender)</label>
-                        <select id="transferSender" required></select>
+                        <select id="transferSender" required data-testid="transferSender"></select>
                     </div>
                     <div class="form-row">
                         <label>To (Receiver)</label>
-                        <select id="transferReceiver" required></select>
+                        <select id="transferReceiver" required data-testid="transferReceiver"></select>
                     </div>
                     <div class="form-row">
                         <label>Amount</label>
-                        <input type="number" id="transferAmount" step="0.01" min="0.01" required>
+                        <input type="number" id="transferAmount" step="0.01" min="0.01" required data-testid="transferAmount">
                     </div>
-                    <button type="submit">Initiate Transfer</button>
+                    <button type="submit" data-testid="transferSubmit">Initiate Transfer</button>
                 </form>
-                <div id="transferResult" class="result"></div>
+                <div id="transferResult" class="result" data-testid="transferResult"></div>
             </div>
         </section>
 
-        <section id="page-pending" class="page">
+        <section id="page-pending" class="page" data-testid="page-pending">
             <h2>Pending Transfers</h2>
             <div class="card">
                 <div class="filter-row">
                     <label>Filter by party:</label>
-                    <select id="pendingFilter">
+                    <select id="pendingFilter" data-testid="pendingFilter">
                         <option value="">All</option>
                     </select>
                 </div>
-                <div id="pendingList"><p class="loading">Loading...</p></div>
+                <div id="pendingList" data-testid="pendingList"><p class="loading">Loading...</p></div>
             </div>
         </section>
 
-        <section id="page-burn" class="page">
+        <section id="page-burn" class="page" data-testid="page-burn">
             <h2>Burn Bond</h2>
             <div class="card">
-                <form id="burnForm">
+                <form id="burnForm" data-testid="burnForm">
                     <div class="form-row">
                         <label>Party</label>
-                        <select id="burnParty" required></select>
+                        <select id="burnParty" required data-testid="burnParty"></select>
                     </div>
                     <div class="form-row">
                         <label>Contract ID</label>
-                        <input type="text" id="burnContractId" placeholder="Paste contract ID" required>
+                        <input type="text" id="burnContractId" placeholder="Paste contract ID" required data-testid="burnContractId">
                     </div>
                     <div class="form-row">
                         <label class="checkbox-label">
-                            <input type="checkbox" id="burnAsAdmin"> Burn as Admin
+                            <input type="checkbox" id="burnAsAdmin" data-testid="burnAsAdmin"> Burn as Admin
                         </label>
                     </div>
-                    <button type="submit" class="btn-danger">Burn</button>
+                    <button type="submit" class="btn-danger" data-testid="burnSubmit">Burn</button>
                 </form>
-                <div id="burnResult" class="result"></div>
+                <div id="burnResult" class="result" data-testid="burnResult"></div>
             </div>
             <div class="card">
                 <h3>Your Holdings (click to auto-fill)</h3>
-                <div id="burnHoldingsList"><p class="loading">Loading...</p></div>
+                <div id="burnHoldingsList" data-testid="burnHoldingsList"><p class="loading">Loading...</p></div>
             </div>
         </section>
 
-        <section id="page-parties" class="page">
+        <section id="page-parties" class="page" data-testid="page-parties">
             <h2>Parties</h2>
             <div class="card">
                 <h3>Create Party</h3>
-                <form id="partyForm">
+                <form id="partyForm" data-testid="partyForm">
                     <div class="form-row">
                         <label>Participant</label>
-                        <select id="partyParticipant">
+                        <select id="partyParticipant" data-testid="partyParticipant">
                             <option value="participant1">participant1</option>
                             <option value="participant2">participant2</option>
                             <option value="participant3">participant3</option>
@@ -175,15 +175,15 @@
                     </div>
                     <div class="form-row">
                         <label>Party Hint</label>
-                        <input type="text" id="partyHint" placeholder="e.g. investor1" required>
+                        <input type="text" id="partyHint" placeholder="e.g. investor1" required data-testid="partyHint">
                     </div>
-                    <button type="submit">Create Party</button>
+                    <button type="submit" data-testid="partySubmit">Create Party</button>
                 </form>
-                <div id="partyResult" class="result"></div>
+                <div id="partyResult" class="result" data-testid="partyResult"></div>
             </div>
             <div class="card">
                 <h3>All Parties</h3>
-                <div id="partyList"><p class="loading">Loading...</p></div>
+                <div id="partyList" data-testid="partyList"><p class="loading">Loading...</p></div>
             </div>
         </section>
     </main>
