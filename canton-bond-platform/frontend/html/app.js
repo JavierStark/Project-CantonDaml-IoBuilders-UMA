@@ -124,7 +124,7 @@ async function loadDashboard() {
         $('statParties').textContent = parties.length;
         $('statPending').textContent = pendingTransfers.length;
 
-        renderHoldingsTable('dashboardHoldings', holdings);
+        renderHoldingsTable('dashboardHoldings', holdings, false, true);
         updateStatus('connected');
     } catch (err) {
         $('dashboardHoldings').innerHTML = `<p class="error">Failed: ${err.message}</p>`;
