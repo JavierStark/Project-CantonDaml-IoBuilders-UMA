@@ -704,9 +704,32 @@ func (s *Server) handleBurn(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
 	defer cancel()
 
-	partyID, err := s.lookupPartyIdentifier(ctx, client, req.Party)
+	// Fetch the holding to resolve admin and owner for authorization.
+	// SimpleHolding signatories are admin, owner — archiving requires both in actAs.
+	offset, err := client.LedgerEnd(ctx)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "party not found")
+		writeError(w, http.StatusBadGateway, "failed to query ledger end")
+		return
+	}
+	contracts, err := client.ActiveContracts(ctx, offset, ledger.TemplateSimpleHolding)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to query holdings")
+		return
+	}
+	events := ledger.ExtractCreatedEvents(contracts, ledger.TemplateSimpleHolding)
+
+	var adminID, ownerID string
+	found := false
+	for _, evt := range events {
+		if evt.ContractID == req.ContractID {
+			adminID = evt.GetStringField("admin")
+			ownerID = evt.GetStringField("owner")
+			found = true
+			break
+		}
+	}
+	if !found {
+		writeError(w, http.StatusNotFound, "holding contract not found")
 		return
 	}
 
@@ -725,7 +748,8 @@ func (s *Server) handleBurn(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	offset, err := client.SubmitCommand(ctx, cmdID, submitReq, []string{partyID})
+	// archiving a SimpleHolding requires all signatories (admin, owner) in actAs
+	offset, err = client.SubmitCommand(ctx, cmdID, submitReq, []string{adminID, ownerID})
 	if err != nil {
 		log.Printf("burn error: %v", err)
 		writeError(w, http.StatusBadGateway, fmt.Sprintf("burn failed: %v", err))
