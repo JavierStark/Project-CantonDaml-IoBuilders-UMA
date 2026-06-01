@@ -555,8 +555,6 @@ func (s *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("transfer inputs: %d holdings, first: %.20s, remaining: %.2f, amount: %.2f", len(inputCIDs), inputCIDs[0], remaining, req.Amount)
-
 	// Get factory admin from the factory contract
 	factoryAdmin := factoryEvents[0].GetStringField("admin")
 
