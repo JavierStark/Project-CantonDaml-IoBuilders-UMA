@@ -17,12 +17,15 @@ import SimpleToken.ContextUtils
 
 -- | The factory contract for creating transfers and allocations.
 -- Single instance supports multiple instrument IDs.
+-- observers: additional parties that can see the factory (needed for cross-participant transfers).
 template SimpleTokenRules
   with
     admin : Party
     supportedInstruments : [Text]
+    observers : [Party]
   where
     signatory admin
+    observer observers
 
     nonconsuming choice Mint
       : ContractId SimpleHolding
