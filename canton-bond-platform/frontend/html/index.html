@@ -27,6 +27,10 @@
     <main>
         <section id="page-dashboard" class="page active">
             <h2>Dashboard</h2>
+            <div class="info-box">
+                <h3>How it works</h3>
+                This dashboard aggregates holdings from all participants. Each bond (<code>SimpleHolding</code>) has <code>signatory admin, owner</code> — both parties can see it on their participant's ledger. The <strong>Observed Via</strong> column shows which Canton participants can view each contract.
+            </div>
             <div class="stats-grid">
                 <div class="stat-card" data-testid="stat-totalBonds">
                     <h3>Total Bonds</h3>
@@ -53,6 +57,10 @@
 
         <section id="page-mint" class="page" data-testid="page-mint">
             <h2>Mint New Bond</h2>
+            <div class="info-box">
+                <h3>How it works</h3>
+                Minting calls the <code>Mint</code> choice on the <code>SimpleTokenRules</code> factory. Its controller is <code>admin, owner</code> — both must authorize the transaction, so both must be on the <strong>same Canton participant</strong>. The result is a <code>SimpleHolding</code> contract with <code>signatory admin, owner</code>, ensuring both parties can see and interact with it.
+            </div>
             <div class="card">
                 <form id="mintForm" data-testid="mintForm">
                     <div class="form-row">
@@ -87,6 +95,10 @@
 
         <section id="page-holdings" class="page" data-testid="page-holdings">
             <h2>Holdings</h2>
+            <div class="info-box">
+                <h3>How it works</h3>
+                Holdings are <code>SimpleHolding</code> contracts (active bonds) or <code>LockedSimpleHolding</code> contracts (pending transfers). Their signatories — <code>admin, owner</code> for <code>SimpleHolding</code>; <code>admin, owner, lock.holders</code> for <code>LockedSimpleHolding</code> — determine which parties and participants can see them. Locked holdings have an expiry-based lock set during the transfer process.
+            </div>
             <div class="card">
                 <div class="filter-row">
                     <label>Filter by party:</label>
@@ -100,6 +112,10 @@
 
         <section id="page-transfer" class="page" data-testid="page-transfer">
             <h2>Transfer Bond</h2>
+            <div class="info-box">
+                <h3>How it works</h3>
+                Transfers exercise the <code>TransferFactory_Transfer</code> choice on the <code>SimpleTokenRules</code> factory via the <code>TransferFactory</code> interface. The controller is <code>transfer.sender</code> only — no admin authorization needed. The factory was made visible on all participants by adding every party as an <code>observer</code> at creation time, enabling <strong>cross-participant</strong> transfers. The result is a <code>LockedSimpleHolding</code> and a <code>SimpleTransferInstruction</code> pending the receiver's action.
+            </div>
             <div class="card">
                 <form id="transferForm" data-testid="transferForm">
                     <div class="form-row">
@@ -122,6 +138,10 @@
 
         <section id="page-pending" class="page" data-testid="page-pending">
             <h2>Pending Transfers</h2>
+            <div class="info-box">
+                <h3>How it works</h3>
+                When a transfer is initiated, a <code>SimpleTransferInstruction</code> is created with <code>signatory admin, sender</code> and <code>observer receiver</code>. The <strong>receiver</strong> can <em>Accept</em> (creates a new <code>SimpleHolding</code> for them) or <em>Reject</em> (returns funds to sender). The <strong>sender</strong> can <em>Withdraw</em>. During the pending period, funds are locked in a <code>LockedSimpleHolding</code> visible to the receiver as an extra observer.
+            </div>
             <div class="card">
                 <div class="filter-row">
                     <label>Filter by party:</label>
@@ -135,6 +155,10 @@
 
         <section id="page-burn" class="page" data-testid="page-burn">
             <h2>Burn Bond</h2>
+            <div class="info-box">
+                <h3>How it works</h3>
+                <code>SimpleHolding</code> has two burn choices: <code>Burn</code> (controller <code>owner</code>) and <code>BurnByAdmin</code> (controller <code>admin</code>). Both call <code>archive self</code>, and since the holding's signatories are <code>admin, owner</code>, Daml requires <strong>both parties</strong> to authorize the archival — that's why both IDs are included in the submission. The "Burn as Admin" checkbox uses <code>BurnByAdmin</code> but still needs the owner's authorization.
+            </div>
             <div class="card">
                 <form id="burnForm" data-testid="burnForm">
                     <div class="form-row">
@@ -162,6 +186,10 @@
 
         <section id="page-parties" class="page" data-testid="page-parties">
             <h2>Parties</h2>
+            <div class="info-box">
+                <h3>How it works</h3>
+                A <strong>Canton participant</strong> is a node that hosts parties. Each party lives on exactly one participant. <em>Allocating</em> a party creates its identity on the ledger. The party hint (e.g. <code>"bob"</code>) is just a suggestion — the full identifier includes a cryptographic hash (<code>bob::1220...</code>). The backend resolves short names to full IDs when submitting Daml commands.
+            </div>
             <div class="card">
                 <h3>Create Party</h3>
                 <form id="partyForm" data-testid="partyForm">
