@@ -227,14 +227,37 @@ func (c *Client) AllocateParty(ctx context.Context, hint string) (partyDetail, e
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	var out partiesResponse
-	if err := c.doJSON(req, &out); err != nil {
+	rawResp, err := c.doRaw(req)
+	if err != nil {
 		return partyDetail{}, fmt.Errorf("allocate party: %w", err)
 	}
-	if len(out.PartyDetails) == 0 {
-		return partyDetail{}, fmt.Errorf("allocate party returned empty result")
+
+	// Canton JSON API v2 returns partyDetails as either an array or a single object
+	if details, ok := rawResp["partyDetails"].([]any); ok && len(details) > 0 {
+		return parsePartyDetail(details[0])
 	}
-	return out.PartyDetails[0], nil
+	if details, ok := rawResp["partyDetails"].(map[string]any); ok {
+		return parsePartyDetail(details)
+	}
+	return partyDetail{}, fmt.Errorf("allocate party returned unexpected response: %v", rawResp)
+}
+
+func parsePartyDetail(v any) (partyDetail, error) {
+	m, ok := v.(map[string]any)
+	if !ok {
+		return partyDetail{}, fmt.Errorf("unexpected party detail type")
+	}
+	p := partyDetail{}
+	if party, ok := m["party"].(string); ok {
+		p.Party = party
+	}
+	if display, ok := m["displayName"].(string); ok {
+		p.DisplayName = display
+	}
+	if isLocal, ok := m["isLocal"].(bool); ok {
+		p.IsLocal = isLocal
+	}
+	return p, nil
 }
 
 // ExtractCreatedEvents extracts all created events from the active contracts response,
@@ -426,4 +449,24 @@ func (c *Client) doJSON(req *http.Request, out any) error {
 		return fmt.Errorf("decode response: %w", err)
 	}
 	return nil
+}
+
+// doRaw performs an HTTP request and decodes the response into a generic map.
+func (c *Client) doRaw(req *http.Request) (map[string]any, error) {
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("status %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("decode response: %w", err)
+	}
+	return out, nil
 }

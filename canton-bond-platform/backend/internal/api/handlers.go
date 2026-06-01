@@ -465,17 +465,20 @@ func (s *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use the sender's client to find the factory and holdings
-	client := senderClient
-
-	offset, err := client.LedgerEnd(ctx)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to query ledger end")
+	// Query the factory from participant1 where it was created
+	factoryClient, ok := s.clients["participant1"]
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "no participant1 client for factory lookup")
 		return
 	}
 
-	// Find factory
-	factoryResp, err := client.ActiveContracts(ctx, offset, ledger.TemplateSimpleTokenRules)
+	// Find factory — always query participant1
+	factoryOffset, err := factoryClient.LedgerEnd(ctx)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to query factory ledger end")
+		return
+	}
+	factoryResp, err := factoryClient.ActiveContracts(ctx, factoryOffset, ledger.TemplateSimpleTokenRules)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "failed to query factory")
 		return
@@ -487,8 +490,14 @@ func (s *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	}
 	factoryCID := factoryEvents[0].ContractID
 
-	// Find sender's holdings
-	holdingsResp, err := client.ActiveContracts(ctx, offset, ledger.TemplateSimpleHolding)
+	// Find sender's holdings from the sender's participant
+	client := senderClient
+	holdingsOffset, err := client.LedgerEnd(ctx)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, "failed to query ledger end")
+		return
+	}
+	holdingsResp, err := client.ActiveContracts(ctx, holdingsOffset, ledger.TemplateSimpleHolding)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "failed to query holdings")
 		return
@@ -502,7 +511,6 @@ func (s *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	remaining := req.Amount
 
 	if len(req.HoldingCids) > 0 {
-		// Use provided holdings - build a lookup map
 		provided := make(map[string]bool, len(req.HoldingCids))
 		for _, cid := range req.HoldingCids {
 			provided[cid] = true
@@ -529,7 +537,6 @@ func (s *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 			remaining -= amt
 		}
 	} else {
-		// Auto-select unlocked holdings
 		for _, evt := range holdingsEvents {
 			if remaining <= 0 {
 				break
@@ -555,10 +562,8 @@ func (s *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get factory admin from the factory contract
 	factoryAdmin := factoryEvents[0].GetStringField("admin")
 
-	// Build TransferFactory_Transfer choice argument
 	transferArg := map[string]any{
 		"sender":           senderID,
 		"receiver":         receiverID,
@@ -585,8 +590,9 @@ func (s *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	// Include admin in actAs so the contract is visible through the interface
-	offset, err = client.SubmitCommand(ctx, cmdID, submitReq, []string{senderID, factoryAdmin})
+	// Submit from the sender's participant (factory is now visible via observers),
+	// with only the sender in actAs (TransferFactory_Transfer controller is transfer.sender)
+	offset, err := client.SubmitCommand(ctx, cmdID, submitReq, []string{senderID})
 	if err != nil {
 		log.Printf("transfer error: %v", err)
 		writeError(w, http.StatusBadGateway, fmt.Sprintf("transfer failed: %v", err))
@@ -867,16 +873,52 @@ func (s *Server) handleFactory(w http.ResponseWriter, r *http.Request) {
 
 	events := ledger.ExtractCreatedEvents(resp, ledger.TemplateSimpleTokenRules)
 	if len(events) == 0 {
-		// No factory found, create one
-		adminID, err := s.lookupPartyIdentifier(ctx, client, "admin")
-		if err != nil {
-			writeError(w, http.StatusNotFound, "admin party not found on participant1. Bootstrap first.")
+		// No factory found, create one — retry to handle bootstrap race condition
+		var adminID string
+		var lastErr error
+		for i := 0; i < 10; i++ {
+			adminID, lastErr = s.lookupPartyIdentifier(ctx, client, "admin")
+			if lastErr == nil {
+				break
+			}
+			select {
+			case <-ctx.Done():
+				writeError(w, http.StatusGatewayTimeout, "timeout waiting for bootstrap to complete")
+				return
+			case <-time.After(3 * time.Second):
+			}
+		}
+		if lastErr != nil {
+			writeError(w, http.StatusNotFound, "admin party not found on participant1 after retries. Bootstrap may not be complete.")
 			return
+		}
+
+		// Collect all party identifiers from all participants as factory observers.
+		// This makes the factory visible on all participants for cross-participant transfers.
+		var observerIDs []string
+		for _, p := range s.cfg.Participants {
+			pc := s.clients[p.Name]
+			if pc == nil {
+				continue
+			}
+			allParties, err := pc.Parties(ctx)
+			if err != nil {
+				continue
+			}
+			for _, party := range allParties {
+				if party.Party != adminID {
+					observerIDs = append(observerIDs, party.Party)
+				}
+			}
+		}
+		if observerIDs == nil {
+			observerIDs = []string{}
 		}
 
 		createArgs := map[string]any{
 			"admin":               adminID,
 			"supportedInstruments": []string{"BOND"},
+			"observers":           observerIDs,
 		}
 
 		cmdID := newCommandID("create-factory")
