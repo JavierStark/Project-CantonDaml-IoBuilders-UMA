@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
@@ -13,15 +12,16 @@ import (
 
 	"canton-bond-platform/backend/internal/config"
 	"canton-bond-platform/backend/internal/ledger"
+
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 )
 
-// Server wraps an HTTP server with the API handlers.
 type Server struct {
-	cfg    config.Config
-	clients map[string]*ledger.Client // participant name -> client
+	cfg     config.Config
+	clients map[string]*ledger.Client
 }
 
-// NewServer creates a new API server.
 func NewServer(cfg config.Config) *Server {
 	clients := make(map[string]*ledger.Client)
 	for _, p := range cfg.Participants {
@@ -30,26 +30,36 @@ func NewServer(cfg config.Config) *Server {
 	return &Server{cfg: cfg, clients: clients}
 }
 
-// Routes returns the HTTP handler with all routes registered.
-func (s *Server) Routes() http.Handler {
-	mux := http.NewServeMux()
+func (s *Server) Router() *echo.Echo {
+	e := echo.New()
+	e.HideBanner = true
+	e.HidePort = true
 
-	mux.HandleFunc("GET /api/v1/health", s.handleHealth)
-	mux.HandleFunc("GET /api/v1/parties", s.handleParties)
-	mux.HandleFunc("POST /api/v1/parties", s.handleAllocateParty)
-	mux.HandleFunc("GET /api/v1/holdings", s.handleListHoldings)
-	mux.HandleFunc("POST /api/v1/mint", s.handleMint)
-	mux.HandleFunc("POST /api/v1/transfer", s.handleTransfer)
-	mux.HandleFunc("POST /api/v1/transfer/accept", s.handleAcceptTransfer)
-	mux.HandleFunc("POST /api/v1/transfer/reject", s.handleRejectTransfer)
-	mux.HandleFunc("POST /api/v1/transfer/withdraw", s.handleWithdrawTransfer)
-	mux.HandleFunc("POST /api/v1/burn", s.handleBurn)
-	mux.HandleFunc("POST /api/v1/self-transfer", s.handleSelfTransfer)
-	mux.HandleFunc("GET /api/v1/transfer-instructions", s.handleListTransferInstructions)
-	mux.HandleFunc("GET /api/v1/factory", s.handleFactory)
-	mux.HandleFunc("POST /api/v1/factory", s.handleFactory)
+	e.Use(middleware.CORSWithConfig(middleware.CORSConfig{
+		AllowOrigins: []string{"*"},
+		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders: []string{"Content-Type", "Authorization"},
+	}))
+	e.Use(middleware.Logger())
+	e.Use(middleware.Recover())
 
-	return corsMiddleware(loggingMiddleware(mux))
+	v1 := e.Group("/api/v1")
+	v1.GET("/health", s.handleHealth)
+	v1.GET("/parties", s.handleParties)
+	v1.POST("/parties", s.handleAllocateParty)
+	v1.GET("/holdings", s.handleListHoldings)
+	v1.POST("/mint", s.handleMint)
+	v1.POST("/transfer", s.handleTransfer)
+	v1.POST("/transfer/accept", s.handleAcceptTransfer)
+	v1.POST("/transfer/reject", s.handleRejectTransfer)
+	v1.POST("/transfer/withdraw", s.handleWithdrawTransfer)
+	v1.POST("/burn", s.handleBurn)
+	v1.POST("/self-transfer", s.handleSelfTransfer)
+	v1.GET("/transfer-instructions", s.handleListTransferInstructions)
+	v1.GET("/factory", s.handleFactory)
+	v1.POST("/factory", s.handleFactory)
+
+	return e
 }
 
 func (s *Server) clientForParty(party string) (*ledger.Client, error) {
@@ -62,7 +72,6 @@ func (s *Server) clientForParty(party string) (*ledger.Client, error) {
 		}
 	}
 	if p == nil {
-		// Fallback: resolve dynamically from participant party lists.
 		ctx, cancel := context.WithTimeout(context.Background(), s.cfg.RequestTimeout)
 		defer cancel()
 
@@ -84,7 +93,6 @@ func (s *Server) clientForParty(party string) (*ledger.Client, error) {
 				}
 			}
 		}
-
 		return nil, fmt.Errorf("unknown party %q", party)
 	}
 	client, ok := s.clients[p.Name]
@@ -113,23 +121,15 @@ func (s *Server) lookupPartyIdentifier(ctx context.Context, client *ledger.Clien
 	return "", fmt.Errorf("party %q not found", partyName)
 }
 
-// --- Handlers ---
-
-func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+func (s *Server) handleHealth(c echo.Context) error {
+	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 }
 
-func (s *Server) handleParties(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
+func (s *Server) handleParties(c echo.Context) error {
+	ctx, cancel := context.WithTimeout(c.Request().Context(), s.cfg.RequestTimeout)
 	defer cancel()
 
-	type partyEntry struct {
-		Identifier  string `json:"identifier"`
-		DisplayName string `json:"displayName"`
-		Participant string `json:"participant"`
-	}
-
-	var allParties []partyEntry
+	var allParties []map[string]string
 	seen := make(map[string]bool)
 	for _, p := range s.cfg.Participants {
 		client := s.clients[p.Name]
@@ -146,18 +146,17 @@ func (s *Server) handleParties(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			seen[party.Party] = true
-			allParties = append(allParties, partyEntry{
-				Identifier:  party.Party,
-				DisplayName: party.DisplayName,
-				Participant: p.Name,
+			allParties = append(allParties, map[string]string{
+				"identifier":  party.Party,
+				"displayName": party.DisplayName,
+				"participant": p.Name,
 			})
 		}
 	}
-
 	if allParties == nil {
-		allParties = []partyEntry{}
+		allParties = []map[string]string{}
 	}
-	writeJSON(w, http.StatusOK, allParties)
+	return c.JSON(http.StatusOK, allParties)
 }
 
 type allocatePartyRequest struct {
@@ -165,71 +164,61 @@ type allocatePartyRequest struct {
 	Hint        string `json:"hint"`
 }
 
-func (s *Server) handleAllocateParty(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleAllocateParty(c echo.Context) error {
 	var req allocatePartyRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
 	if req.Participant == "" {
-		writeError(w, http.StatusBadRequest, "participant is required")
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "participant is required"})
 	}
 	if req.Hint == "" {
-		writeError(w, http.StatusBadRequest, "hint is required")
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "hint is required"})
 	}
-
 	client, ok := s.clients[req.Participant]
 	if !ok {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown participant: %s", req.Participant))
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("unknown participant: %s", req.Participant)})
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
+	ctx, cancel := context.WithTimeout(c.Request().Context(), s.cfg.RequestTimeout)
 	defer cancel()
 
 	party, err := client.AllocateParty(ctx, req.Hint)
 	if err != nil {
 		log.Printf("error allocating party: %v", err)
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("failed to allocate party: %v", err))
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("failed to allocate party: %v", err)})
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	return c.JSON(http.StatusOK, map[string]any{
 		"identifier":  party.Party,
 		"displayName": party.DisplayName,
 		"participant": req.Participant,
 	})
 }
 
-func (s *Server) handleListHoldings(w http.ResponseWriter, r *http.Request) {
-	party := r.URL.Query().Get("party")
+func (s *Server) handleListHoldings(c echo.Context) error {
+	party := c.QueryParam("party")
 	if party == "" {
-		writeError(w, http.StatusBadRequest, "party query parameter is required")
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "party query parameter is required"})
 	}
 
 	client, err := s.clientForParty(party)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
+	ctx, cancel := context.WithTimeout(c.Request().Context(), s.cfg.RequestTimeout)
 	defer cancel()
 
 	partyID, err := s.lookupPartyIdentifier(ctx, client, party)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
-		return
+		return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
 	}
 
 	offset, err := client.LedgerEnd(ctx)
 	if err != nil {
 		log.Printf("ledger-end error: %v", err)
-		writeError(w, http.StatusBadGateway, "failed to query ledger end")
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
 	}
 
 	resp, err := client.ActiveContracts(ctx, offset,
@@ -238,8 +227,7 @@ func (s *Server) handleListHoldings(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		log.Printf("active-contracts error: %v", err)
-		writeError(w, http.StatusBadGateway, "failed to query active contracts")
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query active contracts"})
 	}
 
 	events := ledger.ExtractCreatedEvents(resp,
@@ -247,20 +235,7 @@ func (s *Server) handleListHoldings(w http.ResponseWriter, r *http.Request) {
 		ledger.TemplateLockedSimpleHolding,
 	)
 
-	type holdingView struct {
-		ContractID   string  `json:"contractId"`
-		TemplateID   string  `json:"templateId"`
-		Admin        string  `json:"admin"`
-		Owner        string  `json:"owner"`
-		InstrumentID string  `json:"instrumentId"`
-		Amount       float64 `json:"amount"`
-		CouponRate   float64 `json:"couponRate"`
-		MaturityDate string  `json:"maturityDate"`
-		Description  string  `json:"description"`
-		Locked       bool    `json:"locked"`
-	}
-
-	var holdings []holdingView
+	var holdings []map[string]any
 	for _, evt := range events {
 		admin := evt.GetStringField("admin")
 		owner := evt.GetStringField("owner")
@@ -268,33 +243,32 @@ func (s *Server) handleListHoldings(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		h := holdingView{
-			ContractID:   evt.ContractID,
-			TemplateID:   evt.TemplateID,
-			Admin:        admin,
-			Owner:        owner,
-			Amount:       evt.GetDecimalField("amount"),
-			CouponRate:   evt.GetDecimalField("couponRate"),
-			MaturityDate: evt.GetStringField("maturityDate"),
-			Description:  evt.GetStringField("description"),
-			Locked:       evt.IsLocked(),
+		h := map[string]any{
+			"contractId":   evt.ContractID,
+			"templateId":   evt.TemplateID,
+			"admin":        admin,
+			"owner":        owner,
+			"amount":       evt.GetDecimalField("amount"),
+			"couponRate":   evt.GetDecimalField("couponRate"),
+			"maturityDate": evt.GetStringField("maturityDate"),
+			"description":  evt.GetStringField("description"),
+			"locked":       evt.IsLocked(),
 		}
 
-		// Extract instrument ID from nested object
 		instRaw, _ := evt.GetField("instrumentId")
 		if instMap, ok := instRaw.(map[string]any); ok {
-			admin, _ := instMap["admin"]
+			a, _ := instMap["admin"]
 			id, _ := instMap["id"]
-			h.InstrumentID = fmt.Sprintf("%v:%v", admin, id)
+			h["instrumentId"] = fmt.Sprintf("%v:%v", a, id)
 		}
 
 		holdings = append(holdings, h)
 	}
 
 	if holdings == nil {
-		holdings = []holdingView{}
+		holdings = []map[string]any{}
 	}
-	writeJSON(w, http.StatusOK, holdings)
+	return c.JSON(http.StatusOK, holdings)
 }
 
 type mintRequest struct {
@@ -306,80 +280,63 @@ type mintRequest struct {
 	Description  string  `json:"description"`
 }
 
-func (s *Server) handleMint(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleMint(c echo.Context) error {
 	var req mintRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
 	if req.Admin == "" || req.Owner == "" {
-		writeError(w, http.StatusBadRequest, "admin and owner are required")
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "admin and owner are required"})
 	}
 	if req.Amount <= 0 {
-		writeError(w, http.StatusBadRequest, "amount must be positive")
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "amount must be positive"})
 	}
 	if req.MaturityDate == "" {
-		writeError(w, http.StatusBadRequest, "maturityDate is required")
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "maturityDate is required"})
 	}
 
-	// Both admin and owner must be on the same participant for the Mint choice
 	adminClient, err := s.clientForParty(req.Admin)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "admin: "+err.Error())
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "admin: " + err.Error()})
 	}
 	ownerClient, err := s.clientForParty(req.Owner)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "owner: "+err.Error())
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "owner: " + err.Error()})
 	}
-
-	// Both must be on the same participant (Mint requires both as controllers)
 	if adminClient != ownerClient {
-		writeError(w, http.StatusBadRequest, "admin and owner must be on the same participant")
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "admin and owner must be on the same participant"})
 	}
 	client := adminClient
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
+	ctx, cancel := context.WithTimeout(c.Request().Context(), s.cfg.RequestTimeout)
 	defer cancel()
 
 	adminID, err := s.lookupPartyIdentifier(ctx, client, req.Admin)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "admin party not found: "+err.Error())
-		return
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "admin party not found: " + err.Error()})
 	}
 	ownerID, err := s.lookupPartyIdentifier(ctx, client, req.Owner)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "owner party not found: "+err.Error())
-		return
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "owner party not found: " + err.Error()})
 	}
 
-	// Find the SimpleTokenRules factory contract
 	offset, err := client.LedgerEnd(ctx)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to query ledger end")
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
 	}
 
 	resp, err := client.ActiveContracts(ctx, offset, ledger.TemplateSimpleTokenRules)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to query factory")
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query factory"})
 	}
 
 	events := ledger.ExtractCreatedEvents(resp, ledger.TemplateSimpleTokenRules)
 	if len(events) == 0 {
-		writeError(w, http.StatusNotFound, "no SimpleTokenRules factory found. Create one via GET or POST /api/v1/factory")
-		return
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "no SimpleTokenRules factory found. Create one via GET or POST /api/v1/factory"})
 	}
 
 	factoryCID := events[0].ContractID
 
-	// Build the Mint choice argument
 	choiceArg := map[string]any{
 		"owner":        ownerID,
 		"instrumentId": ledger.InstrumentID(adminID, "BOND"),
@@ -402,11 +359,10 @@ func (s *Server) handleMint(w http.ResponseWriter, r *http.Request) {
 	offset, err = client.SubmitCommand(ctx, cmdID, submitReq, []string{adminID, ownerID})
 	if err != nil {
 		log.Printf("mint error: %v", err)
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("mint failed: %v", err))
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("mint failed: %v", err)})
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	return c.JSON(http.StatusOK, map[string]any{
 		"status":   "created",
 		"offset":   offset,
 		"admin":    adminID,
@@ -424,83 +380,67 @@ type transferRequest struct {
 	HoldingCids []string `json:"holdingCids"`
 }
 
-func (s *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleTransfer(c echo.Context) error {
 	var req transferRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
 	if req.Sender == "" || req.Receiver == "" {
-		writeError(w, http.StatusBadRequest, "sender and receiver are required")
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "sender and receiver are required"})
 	}
 	if req.Amount <= 0 {
-		writeError(w, http.StatusBadRequest, "amount must be positive")
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "amount must be positive"})
 	}
 
 	senderClient, err := s.clientForParty(req.Sender)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "sender: "+err.Error())
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "sender: " + err.Error()})
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
+	ctx, cancel := context.WithTimeout(c.Request().Context(), s.cfg.RequestTimeout)
 	defer cancel()
 
 	senderID, err := s.lookupPartyIdentifier(ctx, senderClient, req.Sender)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "sender party not found")
-		return
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "sender party not found"})
 	}
 
 	receiverClient, err := s.clientForParty(req.Receiver)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "receiver: "+err.Error())
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "receiver: " + err.Error()})
 	}
 	receiverID, err := s.lookupPartyIdentifier(ctx, receiverClient, req.Receiver)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "receiver party not found")
-		return
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "receiver party not found"})
 	}
 
-	// Query the factory from participant1 where it was created
 	factoryClient, ok := s.clients["participant1"]
 	if !ok {
-		writeError(w, http.StatusInternalServerError, "no participant1 client for factory lookup")
-		return
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "no participant1 client for factory lookup"})
 	}
 
-	// Find factory — always query participant1
 	factoryOffset, err := factoryClient.LedgerEnd(ctx)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to query factory ledger end")
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query factory ledger end"})
 	}
 	factoryResp, err := factoryClient.ActiveContracts(ctx, factoryOffset, ledger.TemplateSimpleTokenRules)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to query factory")
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query factory"})
 	}
 	factoryEvents := ledger.ExtractCreatedEvents(factoryResp, ledger.TemplateSimpleTokenRules)
 	if len(factoryEvents) == 0 {
-		writeError(w, http.StatusNotFound, "no SimpleTokenRules factory found")
-		return
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "no SimpleTokenRules factory found"})
 	}
 	factoryCID := factoryEvents[0].ContractID
 
-	// Find sender's holdings from the sender's participant
 	client := senderClient
 	holdingsOffset, err := client.LedgerEnd(ctx)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to query ledger end")
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
 	}
 	holdingsResp, err := client.ActiveContracts(ctx, holdingsOffset, ledger.TemplateSimpleHolding)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to query holdings")
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query holdings"})
 	}
 	holdingsEvents := ledger.ExtractCreatedEvents(holdingsResp,
 		ledger.TemplateSimpleHolding,
@@ -558,8 +498,7 @@ func (s *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if remaining > 0 {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("insufficient holdings: need %.2f more", remaining))
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("insufficient holdings: need %.2f more", remaining)})
 	}
 
 	factoryAdmin := factoryEvents[0].GetStringField("admin")
@@ -590,16 +529,13 @@ func (s *Server) handleTransfer(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	// Submit from the sender's participant (factory is now visible via observers),
-	// with only the sender in actAs (TransferFactory_Transfer controller is transfer.sender)
 	offset, err := client.SubmitCommand(ctx, cmdID, submitReq, []string{senderID})
 	if err != nil {
 		log.Printf("transfer error: %v", err)
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("transfer failed: %v", err))
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("transfer failed: %v", err)})
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	return c.JSON(http.StatusOK, map[string]any{
 		"status":   "pending",
 		"offset":   offset,
 		"sender":   senderID,
@@ -613,42 +549,38 @@ type transferActionRequest struct {
 	ContractID string `json:"contractId"`
 }
 
-func (s *Server) handleAcceptTransfer(w http.ResponseWriter, r *http.Request) {
-	s.handleTransferAction(w, r, ledger.ChoiceTransferInstructionAccept, "accept")
+func (s *Server) handleAcceptTransfer(c echo.Context) error {
+	return s.handleTransferAction(c, ledger.ChoiceTransferInstructionAccept, "accept")
 }
 
-func (s *Server) handleRejectTransfer(w http.ResponseWriter, r *http.Request) {
-	s.handleTransferAction(w, r, ledger.ChoiceTransferInstructionReject, "reject")
+func (s *Server) handleRejectTransfer(c echo.Context) error {
+	return s.handleTransferAction(c, ledger.ChoiceTransferInstructionReject, "reject")
 }
 
-func (s *Server) handleWithdrawTransfer(w http.ResponseWriter, r *http.Request) {
-	s.handleTransferAction(w, r, ledger.ChoiceTransferInstructionWithdraw, "withdraw")
+func (s *Server) handleWithdrawTransfer(c echo.Context) error {
+	return s.handleTransferAction(c, ledger.ChoiceTransferInstructionWithdraw, "withdraw")
 }
 
-func (s *Server) handleTransferAction(w http.ResponseWriter, r *http.Request, choice, action string) {
+func (s *Server) handleTransferAction(c echo.Context, choice, action string) error {
 	var req transferActionRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
 	if req.Party == "" || req.ContractID == "" {
-		writeError(w, http.StatusBadRequest, "party and contractId are required")
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "party and contractId are required"})
 	}
 
 	client, err := s.clientForParty(req.Party)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
+	ctx, cancel := context.WithTimeout(c.Request().Context(), s.cfg.RequestTimeout)
 	defer cancel()
 
 	partyID, err := s.lookupPartyIdentifier(ctx, client, req.Party)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "party not found")
-		return
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "party not found"})
 	}
 
 	cmdID := newCommandID(action)
@@ -663,16 +595,13 @@ func (s *Server) handleTransferAction(w http.ResponseWriter, r *http.Request, ch
 		},
 	}
 
-	// Interface choices need the interface templateId and the contract must
-	// be visible to the submitting party through the interface.
 	offset, err := client.SubmitCommand(ctx, cmdID, submitReq, []string{partyID})
 	if err != nil {
 		log.Printf("%s error: %v", action, err)
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("%s failed: %v", action, err))
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("%s failed: %v", action, err)})
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	return c.JSON(http.StatusOK, map[string]any{
 		"status": action + "ed",
 		"offset": offset,
 	})
@@ -684,37 +613,30 @@ type burnRequest struct {
 	AsAdmin    bool   `json:"asAdmin,omitempty"`
 }
 
-func (s *Server) handleBurn(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleBurn(c echo.Context) error {
 	var req burnRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
 	if req.Party == "" || req.ContractID == "" {
-		writeError(w, http.StatusBadRequest, "party and contractId are required")
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "party and contractId are required"})
 	}
 
 	client, err := s.clientForParty(req.Party)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
+	ctx, cancel := context.WithTimeout(c.Request().Context(), s.cfg.RequestTimeout)
 	defer cancel()
 
-	// Fetch the holding to resolve admin and owner for authorization.
-	// SimpleHolding signatories are admin, owner — archiving requires both in actAs.
 	offset, err := client.LedgerEnd(ctx)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to query ledger end")
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
 	}
 	contracts, err := client.ActiveContracts(ctx, offset, ledger.TemplateSimpleHolding)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to query holdings")
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query holdings"})
 	}
 	events := ledger.ExtractCreatedEvents(contracts, ledger.TemplateSimpleHolding)
 
@@ -729,8 +651,7 @@ func (s *Server) handleBurn(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !found {
-		writeError(w, http.StatusNotFound, "holding contract not found")
-		return
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "holding contract not found"})
 	}
 
 	choice := ledger.ChoiceBurn
@@ -748,83 +669,65 @@ func (s *Server) handleBurn(w http.ResponseWriter, r *http.Request) {
 		},
 	}
 
-	// archiving a SimpleHolding requires all signatories (admin, owner) in actAs
 	offset, err = client.SubmitCommand(ctx, cmdID, submitReq, []string{adminID, ownerID})
 	if err != nil {
 		log.Printf("burn error: %v", err)
-		writeError(w, http.StatusBadGateway, fmt.Sprintf("burn failed: %v", err))
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("burn failed: %v", err)})
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	return c.JSON(http.StatusOK, map[string]any{
 		"status": "burned",
 		"offset": offset,
 	})
 }
 
-func (s *Server) handleSelfTransfer(w http.ResponseWriter, r *http.Request) {
+func (s *Server) handleSelfTransfer(c echo.Context) error {
 	var req transferRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
 	}
 	if req.Sender == "" || req.Receiver == "" {
-		writeError(w, http.StatusBadRequest, "sender and receiver are required")
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "sender and receiver are required"})
 	}
 	if req.Sender != req.Receiver {
-		writeError(w, http.StatusBadRequest, "self-transfer requires sender == receiver")
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "self-transfer requires sender == receiver"})
 	}
 
-	// Reuse the transfer handler but with sender == receiver
-	s.handleTransfer(w, r)
+	return s.handleTransfer(c)
 }
 
-func (s *Server) handleListTransferInstructions(w http.ResponseWriter, r *http.Request) {
-	party := r.URL.Query().Get("party")
+func (s *Server) handleListTransferInstructions(c echo.Context) error {
+	party := c.QueryParam("party")
 	if party == "" {
-		writeError(w, http.StatusBadRequest, "party query parameter is required")
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "party query parameter is required"})
 	}
 
 	client, err := s.clientForParty(party)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
+	ctx, cancel := context.WithTimeout(c.Request().Context(), s.cfg.RequestTimeout)
 	defer cancel()
 
 	partyID, err := s.lookupPartyIdentifier(ctx, client, party)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "party not found")
-		return
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "party not found"})
 	}
 
 	offset, err := client.LedgerEnd(ctx)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to query ledger end")
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
 	}
 
 	resp, err := client.ActiveContracts(ctx, offset, ledger.TemplateSimpleTransferInstruction)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to query transfer instructions")
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query transfer instructions"})
 	}
 
 	events := ledger.ExtractCreatedEvents(resp, ledger.TemplateSimpleTransferInstruction)
 
-	type transferView struct {
-		ContractID string  `json:"contractId"`
-		Sender     string  `json:"sender"`
-		Receiver   string  `json:"receiver"`
-		Amount     float64 `json:"amount"`
-	}
-
-	var transfers []transferView
+	var transfers []map[string]any
 	for _, evt := range events {
 		transferRaw, hasTransfer := evt.GetField("transfer")
 		if !hasTransfer {
@@ -848,56 +751,53 @@ func (s *Server) handleListTransferInstructions(w http.ResponseWriter, r *http.R
 			continue
 		}
 
-		t := transferView{
-			ContractID: evt.ContractID,
-			Sender:     sender,
-			Receiver:   receiver,
-		}
-
+		var amount float64
 		if amtRaw, ok := transferMap["amount"]; ok {
 			switch v := amtRaw.(type) {
 			case string:
-				fmt.Sscanf(v, "%f", &t.Amount)
+				fmt.Sscanf(v, "%f", &amount)
 			case float64:
-				t.Amount = v
+				amount = v
 			}
+		}
+
+		t := map[string]any{
+			"contractId": evt.ContractID,
+			"sender":     sender,
+			"receiver":   receiver,
+			"amount":     amount,
 		}
 
 		transfers = append(transfers, t)
 	}
 
 	if transfers == nil {
-		transfers = []transferView{}
+		transfers = []map[string]any{}
 	}
-	writeJSON(w, http.StatusOK, transfers)
+	return c.JSON(http.StatusOK, transfers)
 }
 
-func (s *Server) handleFactory(w http.ResponseWriter, r *http.Request) {
-	// Try to find the factory on participant1
+func (s *Server) handleFactory(c echo.Context) error {
 	client, ok := s.clients["participant1"]
 	if !ok {
-		writeError(w, http.StatusInternalServerError, "no participant1 client")
-		return
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "no participant1 client"})
 	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout)
+	ctx, cancel := context.WithTimeout(c.Request().Context(), s.cfg.RequestTimeout)
 	defer cancel()
 
 	offset, err := client.LedgerEnd(ctx)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to query ledger end")
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
 	}
 
 	resp, err := client.ActiveContracts(ctx, offset, ledger.TemplateSimpleTokenRules)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, "failed to query factory")
-		return
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query factory"})
 	}
 
 	events := ledger.ExtractCreatedEvents(resp, ledger.TemplateSimpleTokenRules)
 	if len(events) == 0 {
-		// No factory found, create one — retry to handle bootstrap race condition
 		var adminID string
 		var lastErr error
 		for i := 0; i < 10; i++ {
@@ -907,18 +807,14 @@ func (s *Server) handleFactory(w http.ResponseWriter, r *http.Request) {
 			}
 			select {
 			case <-ctx.Done():
-				writeError(w, http.StatusGatewayTimeout, "timeout waiting for bootstrap to complete")
-				return
+				return c.JSON(http.StatusGatewayTimeout, map[string]string{"error": "timeout waiting for bootstrap to complete"})
 			case <-time.After(3 * time.Second):
 			}
 		}
 		if lastErr != nil {
-			writeError(w, http.StatusNotFound, "admin party not found on participant1 after retries. Bootstrap may not be complete.")
-			return
+			return c.JSON(http.StatusNotFound, map[string]string{"error": "admin party not found on participant1 after retries. Bootstrap may not be complete."})
 		}
 
-		// Collect all party identifiers from all participants as factory observers.
-		// This makes the factory visible on all participants for cross-participant transfers.
 		var observerIDs []string
 		for _, p := range s.cfg.Participants {
 			pc := s.clients[p.Name]
@@ -956,21 +852,19 @@ func (s *Server) handleFactory(w http.ResponseWriter, r *http.Request) {
 		offset, err := client.SubmitCommand(ctx, cmdID, submitReq, []string{adminID})
 		if err != nil {
 			log.Printf("create factory error: %v", err)
-			writeError(w, http.StatusBadGateway, fmt.Sprintf("create factory failed: %v", err))
-			return
+			return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("create factory failed: %v", err)})
 		}
 
-		writeJSON(w, http.StatusOK, map[string]any{
-			"status":   "created",
-			"offset":   offset,
-			"admin":    adminID,
+		return c.JSON(http.StatusOK, map[string]any{
+			"status":      "created",
+			"offset":      offset,
+			"admin":       adminID,
 			"instruments": []string{"BOND"},
 		})
-		return
 	}
 
 	factory := events[0]
-	writeJSON(w, http.StatusOK, map[string]any{
+	return c.JSON(http.StatusOK, map[string]any{
 		"contractId":  factory.ContractID,
 		"templateId":  factory.TemplateID,
 		"admin":       factory.GetStringField("admin"),

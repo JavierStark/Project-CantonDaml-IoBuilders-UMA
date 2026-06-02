@@ -3,7 +3,6 @@ package main
 import (
 	"fmt"
 	"log"
-	"net/http"
 
 	"canton-bond-platform/backend/internal/api"
 	"canton-bond-platform/backend/internal/config"
@@ -15,7 +14,8 @@ func main() {
 		log.Fatalf("config error: %v", err)
 	}
 
-	server := api.NewServer(cfg)
+	s := api.NewServer(cfg)
+	e := s.Router()
 
 	addr := fmt.Sprintf("%s:%d", cfg.HTTPHost, cfg.HTTPPort)
 	log.Printf("bond API listening on %s", addr)
@@ -24,7 +24,5 @@ func main() {
 		log.Printf("  participant %s -> %s [%s]", p.Name, p.URL, p.Parties)
 	}
 
-	if err := http.ListenAndServe(addr, server.Routes()); err != nil {
-		log.Fatalf("server error: %v", err)
-	}
+	e.Logger.Fatal(e.Start(addr))
 }
