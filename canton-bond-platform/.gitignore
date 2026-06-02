@@ -7,3 +7,6 @@ frontend/dist/
 .aspire/
 apphost.run.json
 .agents/
+LocalPackages/
+Canton.Aspire.Hosting/bin/
+Canton.Aspire.Hosting/obj/
