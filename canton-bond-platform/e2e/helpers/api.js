@@ -1,4 +1,4 @@
-const API = 'http://localhost:8080/api/v1';
+const API = 'http://localhost:3000/api/v1';
 
 export async function apiRequest(path, options = {}) {
   const url = `${API}${path}`;

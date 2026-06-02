@@ -12,6 +12,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
+	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 )
 
 type Server struct {
@@ -37,6 +38,7 @@ func (s *Server) Router() *echo.Echo {
 		AllowMethods: []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowHeaders: []string{"Content-Type", "Authorization"},
 	}))
+	e.Use(otelecho.Middleware("backend"))
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 

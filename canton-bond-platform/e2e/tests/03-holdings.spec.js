@@ -20,14 +20,7 @@ test.describe('Holdings View', () => {
 
   test.beforeEach(async ({ page }) => {
     await page.goto('/');
-    const startBtn = page.locator('[data-testid="startFactoryBtn"]');
-    await expect(startBtn).toBeVisible({ timeout: 15000 });
-    const statusBadge = page.locator('[data-testid="statusBadge"]');
-    const text = await statusBadge.textContent();
-    if (text && !text.includes('Factory ready') && !text.includes('Connected')) {
-      await startBtn.click();
-      await expect(statusBadge).toContainText(/Factory ready|Connected/i, { timeout: 30000 });
-    }
+    await expect(page.locator('[data-testid="statusBadge"]')).toContainText(/Factory ready|Connected|✅/i, { timeout: 60000 });
   });
 
   test('should show holdings page with no filter', async ({ page }) => {

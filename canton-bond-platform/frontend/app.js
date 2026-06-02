@@ -37,15 +37,7 @@ function hideResult(el) {
 function setFactoryLocked(locked, message) {
     factoryReady = !locked;
     document.body.classList.toggle('factory-locked', locked);
-    const startBtn = $('startFactoryBtn');
-    if (startBtn) startBtn.disabled = !locked;
     updateStatus(locked ? 'locked' : 'ready', message);
-}
-
-function requireFactoryReady(resultEl) {
-    if (factoryReady) return true;
-    if (resultEl) showResult(resultEl, 'Press Start Factory first.', true);
-    return false;
 }
 
 // Navigation
@@ -94,7 +86,6 @@ async function loadDashboard() {
             });
         }
 
-        // Also get other parties' holdings
         for (const p of uniqueParties(parties)) {
             const token = partyToken(p);
             if (token !== 'admin') {
@@ -234,7 +225,7 @@ function renderHoldingsTable(containerId, data, clickToFill = false, showObserve
             <td>${h.description || '-'}</td>
             <td>${h.locked ? '<span class="badge badge-locked">Locked</span>' : '<span class="badge badge-active">Active</span>'}</td>
             ${showObservedVia ? `<td>${observedVia}</td>` : ''}
-            ${clickToFill ? `<td><button class="btn-small" onclick="fillBurn('${h.contractId}')">Select</button></td>` : ''}
+            ${clickToFill ? `<td><button class="btn-small" data-action="fill-burn" data-cid="${h.contractId}">Select</button></td>` : ''}
         </tr>`;
     }
     html += '</tbody></table>';
@@ -263,9 +254,9 @@ function renderPendingTable(data) {
             <td>${t.amount}</td>
             <td style="font-size:0.75rem;max-width:200px;overflow:hidden;text-overflow:ellipsis">${t.contractId}</td>
             <td>
-                <button class="btn-small btn-success" onclick="acceptTransfer('${t.contractId}', '${shortName(t.receiver)}')">Accept</button>
-                <button class="btn-small btn-danger" onclick="rejectTransfer('${t.contractId}', '${shortName(t.receiver)}')">Reject</button>
-                <button class="btn-small" onclick="withdrawTransfer('${t.contractId}', '${shortName(t.sender)}')">Withdraw</button>
+                <button class="btn-small btn-success" data-action="accept-transfer" data-cid="${t.contractId}" data-party="${shortName(t.receiver)}">Accept</button>
+                <button class="btn-small btn-danger" data-action="reject-transfer" data-cid="${t.contractId}" data-party="${shortName(t.receiver)}">Reject</button>
+                <button class="btn-small" data-action="withdraw-transfer" data-cid="${t.contractId}" data-party="${shortName(t.sender)}">Withdraw</button>
             </td>
         </tr>`;
     }
@@ -340,7 +331,7 @@ function updateStatus(state, msg) {
         badge.textContent = '✅ ' + (msg || 'Connected');
     } else if (state === 'locked') {
         badge.classList.add('locked');
-        badge.textContent = msg || '⏳ Factory not started - press Start Factory';
+        badge.textContent = msg || '⏳ Initializing...';
     } else if (state === 'error') {
         badge.classList.add('error');
         badge.textContent = '❌ ' + (msg || 'Error');
@@ -354,15 +345,42 @@ function fillBurn(cid) {
     $('burnContractId').scrollIntoView({ behavior: 'smooth' });
 }
 
+// ---- Event Delegation (for dynamic buttons in ES module mode) ----
+document.addEventListener('click', e => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const cid = btn.dataset.cid;
+    const party = btn.dataset.party;
+    switch (action) {
+        case 'fill-burn':
+            fillBurn(cid);
+            break;
+        case 'accept-transfer':
+            if (confirm('Accept this transfer?')) {
+                acceptTransfer(cid, party);
+            }
+            break;
+        case 'reject-transfer':
+            if (confirm('Reject this transfer?')) {
+                rejectTransfer(cid, party);
+            }
+            break;
+        case 'withdraw-transfer':
+            if (confirm('Withdraw this transfer?')) {
+                withdrawTransfer(cid, party);
+            }
+            break;
+    }
+});
+
 // ---- Event Handlers ----
 
-// Mint
 $('mintForm').addEventListener('submit', async e => {
     e.preventDefault();
     const btn = e.target.querySelector('button');
     const result = $('mintResult');
     hideResult(result);
-    if (!requireFactoryReady(result)) return;
     btn.disabled = true;
     try {
         const data = await api('/mint', {
@@ -385,13 +403,11 @@ $('mintForm').addEventListener('submit', async e => {
     }
 });
 
-// Transfer
 $('transferForm').addEventListener('submit', async e => {
     e.preventDefault();
     const btn = e.target.querySelector('button');
     const result = $('transferResult');
     hideResult(result);
-    if (!requireFactoryReady(result)) return;
     btn.disabled = true;
     try {
         const data = await api('/transfer', {
@@ -411,7 +427,6 @@ $('transferForm').addEventListener('submit', async e => {
     }
 });
 
-// Accept transfer
 async function acceptTransfer(cid, party) {
     if (!confirm('Accept this transfer?')) return;
     try {
@@ -427,7 +442,6 @@ async function acceptTransfer(cid, party) {
     }
 }
 
-// Reject transfer
 async function rejectTransfer(cid, party) {
     if (!confirm('Reject this transfer?')) return;
     try {
@@ -443,7 +457,6 @@ async function rejectTransfer(cid, party) {
     }
 }
 
-// Withdraw transfer
 async function withdrawTransfer(cid, party) {
     if (!confirm('Withdraw this transfer?')) return;
     try {
@@ -459,13 +472,11 @@ async function withdrawTransfer(cid, party) {
     }
 }
 
-// Burn
 $('burnForm').addEventListener('submit', async e => {
     e.preventDefault();
     const btn = e.target.querySelector('button');
     const result = $('burnResult');
     hideResult(result);
-    if (!requireFactoryReady(result)) return;
     btn.disabled = true;
     try {
         const data = await api('/burn', {
@@ -485,13 +496,11 @@ $('burnForm').addEventListener('submit', async e => {
     }
 });
 
-// Party form
 $('partyForm').addEventListener('submit', async e => {
     e.preventDefault();
     const btn = e.target.querySelector('button');
     const result = $('partyResult');
     hideResult(result);
-    if (!requireFactoryReady(result)) return;
     btn.disabled = true;
     try {
         const data = await api('/parties', {
@@ -510,19 +519,17 @@ $('partyForm').addEventListener('submit', async e => {
     }
 });
 
-// Holdings filter
 $('holdingsFilter').addEventListener('change', loadHoldings);
 $('pendingFilter').addEventListener('change', loadPending);
 $('burnParty').addEventListener('change', loadBurnHoldings);
 
-// Factory bootstrap with retry
-$('startFactoryBtn').addEventListener('click', async () => {
-    const btn = $('startFactoryBtn');
-    btn.disabled = true;
-    updateStatus('connecting', 'Starting factory...');
-    const maxRetries = 5;
+// Init - auto-create factory
+(async function init() {
+    setFactoryLocked(true, 'Initializing...');
+    const maxRetries = 10;
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
         try {
+            await api('/health');
             const data = await api('/factory', { method: 'POST' });
             setFactoryLocked(false, data.status === 'created' ? 'Factory ready' : 'Factory ready');
             await loadParties();
@@ -533,26 +540,13 @@ $('startFactoryBtn').addEventListener('click', async () => {
             return;
         } catch (err) {
             if (attempt < maxRetries) {
-                const delay = Math.min(2000 * Math.pow(2, attempt - 1), 10000);
-                updateStatus('connecting', `Retrying factory (${attempt}/${maxRetries})...`);
+                const delay = Math.min(3000 * attempt, 15000);
+                updateStatus('locked', `Retrying (${attempt}/${maxRetries})...`);
                 await new Promise(r => setTimeout(r, delay));
             } else {
-                setFactoryLocked(true, 'Factory not started - press Start Factory');
+                setFactoryLocked(true, 'Initialization failed');
                 updateStatus('error', err.message);
-                btn.disabled = false;
             }
         }
-    }
-});
-
-// Init
-(async function init() {
-    try {
-        await api('/health');
-        setFactoryLocked(true, 'Factory not started - press Start Factory');
-        $('dashboardHoldings').innerHTML = '<p class="loading">Press Start Factory to initialize the ledger.</p>';
-    } catch (err) {
-        updateStatus('error', err.message);
-        setFactoryLocked(true, 'Factory not started - press Start Factory');
     }
 })();

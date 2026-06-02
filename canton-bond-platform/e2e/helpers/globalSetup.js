@@ -1,6 +1,6 @@
-const { initFactory, healthCheck } = require('./api.js');
-
 async function globalSetup() {
+  const { initFactory, healthCheck } = await import('./api.js');
+
   console.log('Waiting for backend API...');
   let retries = 30;
   while (retries > 0) {
