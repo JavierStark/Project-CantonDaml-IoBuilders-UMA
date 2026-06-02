@@ -1,4 +1,4 @@
-package api
+package main
 
 import (
 	"context"
@@ -10,22 +10,19 @@ import (
 	"strings"
 	"time"
 
-	"canton-bond-platform/backend/internal/config"
-	"canton-bond-platform/backend/internal/ledger"
-
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 )
 
 type Server struct {
-	cfg     config.Config
-	clients map[string]*ledger.Client
+	cfg     Config
+	clients map[string]*Client
 }
 
-func NewServer(cfg config.Config) *Server {
-	clients := make(map[string]*ledger.Client)
+func NewServer(cfg Config) *Server {
+	clients := make(map[string]*Client)
 	for _, p := range cfg.Participants {
-		clients[p.Name] = ledger.New(p.URL, cfg.UserID, cfg.RequestTimeout)
+		clients[p.Name] = New(p.URL, cfg.UserID, cfg.RequestTimeout)
 	}
 	return &Server{cfg: cfg, clients: clients}
 }
@@ -62,7 +59,7 @@ func (s *Server) Router() *echo.Echo {
 	return e
 }
 
-func (s *Server) clientForParty(party string) (*ledger.Client, error) {
+func (s *Server) clientForParty(party string) (*Client, error) {
 	party = strings.TrimSpace(party)
 	p := s.cfg.PartyToParticipant(party)
 	if p == nil {
@@ -102,7 +99,7 @@ func (s *Server) clientForParty(party string) (*ledger.Client, error) {
 	return client, nil
 }
 
-func (s *Server) lookupPartyIdentifier(ctx context.Context, client *ledger.Client, partyName string) (string, error) {
+func (s *Server) lookupPartyIdentifier(ctx context.Context, client *Client, partyName string) (string, error) {
 	partyName = strings.TrimSpace(partyName)
 	partyShort := strings.SplitN(partyName, "::", 2)[0]
 	parties, err := client.Parties(ctx)
@@ -222,17 +219,17 @@ func (s *Server) handleListHoldings(c echo.Context) error {
 	}
 
 	resp, err := client.ActiveContracts(ctx, offset,
-		ledger.TemplateSimpleHolding,
-		ledger.TemplateLockedSimpleHolding,
+		TemplateSimpleHolding,
+		TemplateLockedSimpleHolding,
 	)
 	if err != nil {
 		log.Printf("active-contracts error: %v", err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query active contracts"})
 	}
 
-	events := ledger.ExtractCreatedEvents(resp,
-		ledger.TemplateSimpleHolding,
-		ledger.TemplateLockedSimpleHolding,
+	events := ExtractCreatedEvents(resp,
+		TemplateSimpleHolding,
+		TemplateLockedSimpleHolding,
 	)
 
 	var holdings []map[string]any
@@ -325,12 +322,12 @@ func (s *Server) handleMint(c echo.Context) error {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
 	}
 
-	resp, err := client.ActiveContracts(ctx, offset, ledger.TemplateSimpleTokenRules)
+	resp, err := client.ActiveContracts(ctx, offset, TemplateSimpleTokenRules)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query factory"})
 	}
 
-	events := ledger.ExtractCreatedEvents(resp, ledger.TemplateSimpleTokenRules)
+	events := ExtractCreatedEvents(resp, TemplateSimpleTokenRules)
 	if len(events) == 0 {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "no SimpleTokenRules factory found. Create one via GET or POST /api/v1/factory"})
 	}
@@ -339,18 +336,18 @@ func (s *Server) handleMint(c echo.Context) error {
 
 	choiceArg := map[string]any{
 		"owner":        ownerID,
-		"instrumentId": ledger.InstrumentID(adminID, "BOND"),
-		"amount":       ledger.DamlDecimal(req.Amount),
-		"couponRate":   ledger.DamlDecimal(req.CouponRate),
+		"instrumentId": InstrumentID(adminID, "BOND"),
+		"amount":       DamlDecimal(req.Amount),
+		"couponRate":   DamlDecimal(req.CouponRate),
 		"maturityDate": req.MaturityDate,
 		"description":  req.Description,
 	}
 
 	cmdID := newCommandID("mint")
-	submitReq := ledger.Command{
-		ExerciseCommand: &ledger.ExerciseCommand{
-			TemplateID:     ledger.TemplateSimpleTokenRules,
-			Choice:         ledger.ChoiceMint,
+	submitReq := Command{
+		ExerciseCommand: &ExerciseCommand{
+			TemplateID:     TemplateSimpleTokenRules,
+			Choice:         ChoiceMint,
 			ContractID:     factoryCID,
 			ChoiceArgument: choiceArg,
 		},
@@ -423,11 +420,11 @@ func (s *Server) handleTransfer(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query factory ledger end"})
 	}
-	factoryResp, err := factoryClient.ActiveContracts(ctx, factoryOffset, ledger.TemplateSimpleTokenRules)
+	factoryResp, err := factoryClient.ActiveContracts(ctx, factoryOffset, TemplateSimpleTokenRules)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query factory"})
 	}
-	factoryEvents := ledger.ExtractCreatedEvents(factoryResp, ledger.TemplateSimpleTokenRules)
+	factoryEvents := ExtractCreatedEvents(factoryResp, TemplateSimpleTokenRules)
 	if len(factoryEvents) == 0 {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "no SimpleTokenRules factory found"})
 	}
@@ -438,13 +435,13 @@ func (s *Server) handleTransfer(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
 	}
-	holdingsResp, err := client.ActiveContracts(ctx, holdingsOffset, ledger.TemplateSimpleHolding)
+	holdingsResp, err := client.ActiveContracts(ctx, holdingsOffset, TemplateSimpleHolding)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query holdings"})
 	}
-	holdingsEvents := ledger.ExtractCreatedEvents(holdingsResp,
-		ledger.TemplateSimpleHolding,
-		ledger.TemplateLockedSimpleHolding,
+	holdingsEvents := ExtractCreatedEvents(holdingsResp,
+		TemplateSimpleHolding,
+		TemplateLockedSimpleHolding,
 	)
 
 	var inputCIDs []string
@@ -506,8 +503,8 @@ func (s *Server) handleTransfer(c echo.Context) error {
 	transferArg := map[string]any{
 		"sender":           senderID,
 		"receiver":         receiverID,
-		"amount":           ledger.DamlDecimal(req.Amount),
-		"instrumentId":     ledger.InstrumentID(factoryAdmin, "BOND"),
+		"amount":           DamlDecimal(req.Amount),
+		"instrumentId":     InstrumentID(factoryAdmin, "BOND"),
 		"requestedAt":      time.Now().UTC().Format("2006-01-02T15:04:05.000000Z"),
 		"executeBefore":    time.Now().UTC().Add(24 * time.Hour).Format("2006-01-02T15:04:05.000000Z"),
 		"inputHoldingCids": inputCIDs,
@@ -520,10 +517,10 @@ func (s *Server) handleTransfer(c echo.Context) error {
 	}
 
 	cmdID := newCommandID("transfer")
-	submitReq := ledger.Command{
-		ExerciseCommand: &ledger.ExerciseCommand{
-			TemplateID:     ledger.TemplateTransferFactory,
-			Choice:         ledger.ChoiceTransferFactoryTransfer,
+	submitReq := Command{
+		ExerciseCommand: &ExerciseCommand{
+			TemplateID:     TemplateTransferFactory,
+			Choice:         ChoiceTransferFactoryTransfer,
 			ContractID:     factoryCID,
 			ChoiceArgument: choiceArg,
 		},
@@ -550,15 +547,15 @@ type transferActionRequest struct {
 }
 
 func (s *Server) handleAcceptTransfer(c echo.Context) error {
-	return s.handleTransferAction(c, ledger.ChoiceTransferInstructionAccept, "accept")
+	return s.handleTransferAction(c, ChoiceTransferInstructionAccept, "accept")
 }
 
 func (s *Server) handleRejectTransfer(c echo.Context) error {
-	return s.handleTransferAction(c, ledger.ChoiceTransferInstructionReject, "reject")
+	return s.handleTransferAction(c, ChoiceTransferInstructionReject, "reject")
 }
 
 func (s *Server) handleWithdrawTransfer(c echo.Context) error {
-	return s.handleTransferAction(c, ledger.ChoiceTransferInstructionWithdraw, "withdraw")
+	return s.handleTransferAction(c, ChoiceTransferInstructionWithdraw, "withdraw")
 }
 
 func (s *Server) handleTransferAction(c echo.Context, choice, action string) error {
@@ -584,9 +581,9 @@ func (s *Server) handleTransferAction(c echo.Context, choice, action string) err
 	}
 
 	cmdID := newCommandID(action)
-	submitReq := ledger.Command{
-		ExerciseCommand: &ledger.ExerciseCommand{
-			TemplateID:  ledger.TemplateTransferInstruction,
+	submitReq := Command{
+		ExerciseCommand: &ExerciseCommand{
+			TemplateID:  TemplateTransferInstruction,
 			Choice:      choice,
 			ContractID:  req.ContractID,
 			ChoiceArgument: map[string]any{
@@ -634,11 +631,11 @@ func (s *Server) handleBurn(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
 	}
-	contracts, err := client.ActiveContracts(ctx, offset, ledger.TemplateSimpleHolding)
+	contracts, err := client.ActiveContracts(ctx, offset, TemplateSimpleHolding)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query holdings"})
 	}
-	events := ledger.ExtractCreatedEvents(contracts, ledger.TemplateSimpleHolding)
+	events := ExtractCreatedEvents(contracts, TemplateSimpleHolding)
 
 	var adminID, ownerID string
 	found := false
@@ -654,15 +651,15 @@ func (s *Server) handleBurn(c echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "holding contract not found"})
 	}
 
-	choice := ledger.ChoiceBurn
+	choice := ChoiceBurn
 	if req.AsAdmin {
-		choice = ledger.ChoiceBurnByAdmin
+		choice = ChoiceBurnByAdmin
 	}
 
 	cmdID := newCommandID("burn")
-	submitReq := ledger.Command{
-		ExerciseCommand: &ledger.ExerciseCommand{
-			TemplateID:     ledger.TemplateSimpleHolding,
+	submitReq := Command{
+		ExerciseCommand: &ExerciseCommand{
+			TemplateID:     TemplateSimpleHolding,
 			Choice:         choice,
 			ContractID:     req.ContractID,
 			ChoiceArgument: map[string]any{},
@@ -720,12 +717,12 @@ func (s *Server) handleListTransferInstructions(c echo.Context) error {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
 	}
 
-	resp, err := client.ActiveContracts(ctx, offset, ledger.TemplateSimpleTransferInstruction)
+	resp, err := client.ActiveContracts(ctx, offset, TemplateSimpleTransferInstruction)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query transfer instructions"})
 	}
 
-	events := ledger.ExtractCreatedEvents(resp, ledger.TemplateSimpleTransferInstruction)
+	events := ExtractCreatedEvents(resp, TemplateSimpleTransferInstruction)
 
 	var transfers []map[string]any
 	for _, evt := range events {
@@ -791,12 +788,12 @@ func (s *Server) handleFactory(c echo.Context) error {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
 	}
 
-	resp, err := client.ActiveContracts(ctx, offset, ledger.TemplateSimpleTokenRules)
+	resp, err := client.ActiveContracts(ctx, offset, TemplateSimpleTokenRules)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query factory"})
 	}
 
-	events := ledger.ExtractCreatedEvents(resp, ledger.TemplateSimpleTokenRules)
+	events := ExtractCreatedEvents(resp, TemplateSimpleTokenRules)
 	if len(events) == 0 {
 		var adminID string
 		var lastErr error
@@ -836,15 +833,15 @@ func (s *Server) handleFactory(c echo.Context) error {
 		}
 
 		createArgs := map[string]any{
-			"admin":               adminID,
+			"admin":                adminID,
 			"supportedInstruments": []string{"BOND"},
-			"observers":           observerIDs,
+			"observers":            observerIDs,
 		}
 
 		cmdID := newCommandID("create-factory")
-		submitReq := ledger.Command{
-			CreateCommand: &ledger.CreateCommand{
-				TemplateID:      ledger.TemplateSimpleTokenRules,
+		submitReq := Command{
+			CreateCommand: &CreateCommand{
+				TemplateID:      TemplateSimpleTokenRules,
 				CreateArguments: createArgs,
 			},
 		}

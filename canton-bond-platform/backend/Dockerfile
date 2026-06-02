@@ -4,7 +4,7 @@ WORKDIR /app
 COPY go.mod ./
 COPY . .
 
-RUN go build -o /server ./cmd/server
+RUN go build -o /server .
 
 FROM alpine:3.21
 

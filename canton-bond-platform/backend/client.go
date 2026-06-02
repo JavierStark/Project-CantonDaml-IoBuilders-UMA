@@ -1,4 +1,4 @@
-package ledger
+package main
 
 import (
 	"bytes"
@@ -13,7 +13,6 @@ import (
 	"time"
 )
 
-// Client communicates with a Canton participant JSON Ledger API v2.
 type Client struct {
 	baseURL string
 	userID  string
@@ -46,21 +45,16 @@ type submitResponse struct {
 	CompletionOffset int64 `json:"completionOffset"`
 }
 
-// Command is a Canton ledger API command.
 type Command struct {
 	CreateCommand   *CreateCommand   `json:"CreateCommand,omitempty"`
 	ExerciseCommand *ExerciseCommand `json:"ExerciseCommand,omitempty"`
 }
 
-// CreateCommand creates a new contract.
 type CreateCommand struct {
 	TemplateID      string `json:"templateId"`
 	CreateArguments any    `json:"createArguments"`
 }
 
-// ExerciseCommand exercises a choice on an existing contract.
-// NOTE: JSON API V2 ExerciseCommand does not support choiceInterfaceId.
-// For interface choices, use the interface templateId as TemplateID.
 type ExerciseCommand struct {
 	TemplateID     string `json:"templateId"`
 	Choice         string `json:"choice"`
@@ -70,7 +64,6 @@ type ExerciseCommand struct {
 
 type activeContractsResponse []map[string]any
 
-// New creates a new Canton JSON API client.
 func New(baseURL, userID string, timeout time.Duration) *Client {
 	return &Client{
 		baseURL: baseURL,
@@ -79,7 +72,6 @@ func New(baseURL, userID string, timeout time.Duration) *Client {
 	}
 }
 
-// LedgerEnd returns the current ledger end offset.
 func (c *Client) LedgerEnd(ctx context.Context) (int64, error) {
 	url := c.baseURL + "/v2/state/ledger-end"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -93,7 +85,6 @@ func (c *Client) LedgerEnd(ctx context.Context) (int64, error) {
 	return out.Offset, nil
 }
 
-// ActiveContracts returns active contracts, optionally filtered by template ID.
 func (c *Client) ActiveContracts(ctx context.Context, offset int64, templateIDs ...string) (activeContractsResponse, error) {
 	url := c.baseURL + "/v2/state/active-contracts"
 
@@ -135,8 +126,6 @@ func (c *Client) ActiveContracts(ctx context.Context, offset int64, templateIDs 
 }
 
 func (c *Client) buildFilter(templateIDs []string) map[string]any {
-	// JSON API V2 WildcardFilter to get all contracts; template filtering
-	// is done in Go via ExtractCreatedEvents.
 	return map[string]any{
 		"filtersByParty": map[string]any{},
 		"filtersForAnyParty": map[string]any{
@@ -155,7 +144,6 @@ func (c *Client) buildFilter(templateIDs []string) map[string]any {
 	}
 }
 
-// SubmitCommand submits a single command (create or exercise) and waits for completion.
 func (c *Client) SubmitCommand(ctx context.Context, commandID string, cmd Command, actAs []string) (int64, error) {
 	req := submitRequest{
 		Commands:  []Command{cmd},
@@ -198,7 +186,6 @@ func (c *Client) submitAndWait(ctx context.Context, req submitRequest) (int64, e
 	return out.CompletionOffset, nil
 }
 
-// Parties returns the list of parties on this participant.
 func (c *Client) Parties(ctx context.Context) ([]partyDetail, error) {
 	url := c.baseURL + "/v2/parties"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
@@ -215,7 +202,6 @@ func (c *Client) Parties(ctx context.Context) ([]partyDetail, error) {
 	return out.PartyDetails, nil
 }
 
-// AllocateParty creates a new party on this participant.
 func (c *Client) AllocateParty(ctx context.Context, hint string) (partyDetail, error) {
 	url := c.baseURL + "/v2/parties"
 	body := map[string]string{"partyIdHint": hint}
@@ -232,7 +218,6 @@ func (c *Client) AllocateParty(ctx context.Context, hint string) (partyDetail, e
 		return partyDetail{}, fmt.Errorf("allocate party: %w", err)
 	}
 
-	// Canton JSON API v2 returns partyDetails as either an array or a single object
 	if details, ok := rawResp["partyDetails"].([]any); ok && len(details) > 0 {
 		return parsePartyDetail(details[0])
 	}
@@ -260,8 +245,6 @@ func parsePartyDetail(v any) (partyDetail, error) {
 	return p, nil
 }
 
-// ExtractCreatedEvents extracts all created events from the active contracts response,
-// optionally filtered by matching template IDs.
 func ExtractCreatedEvents(resp activeContractsResponse, filterTemplates ...string) []CreatedEvent {
 	var events []CreatedEvent
 	for _, entry := range resp {
@@ -300,11 +283,9 @@ func templateIDTail(id string) string {
 }
 
 func extractCreatedEvent(entry map[string]any) (CreatedEvent, bool) {
-	// Try top-level "createdEvent"
 	if ce, ok := entry["createdEvent"].(map[string]any); ok {
 		return parseCreatedEvent(ce), true
 	}
-	// Try nested "contractEntry.createdEvent"
 	if ce, ok := entry["contractEntry"].(map[string]any); ok {
 		if evt, ok := ce["createdEvent"].(map[string]any); ok {
 			return parseCreatedEvent(evt), true
@@ -334,20 +315,17 @@ func parseCreatedEvent(raw map[string]any) CreatedEvent {
 	return evt
 }
 
-// CreatedEvent represents a created event from the ledger.
 type CreatedEvent struct {
 	ContractID      string
 	TemplateID      string
 	CreateArguments map[string]any
 }
 
-// GetField safely extracts a field from the create arguments.
 func (e CreatedEvent) GetField(name string) (any, bool) {
 	v, ok := e.CreateArguments[name]
 	return v, ok
 }
 
-// GetStringField extracts a string field.
 func (e CreatedEvent) GetStringField(name string) string {
 	v, ok := e.GetField(name)
 	if !ok {
@@ -362,7 +340,6 @@ func (e CreatedEvent) GetStringField(name string) string {
 	}
 }
 
-// GetDecimalField extracts a decimal field (Daml decimals are JSON strings).
 func (e CreatedEvent) GetDecimalField(name string) float64 {
 	s := e.GetStringField(name)
 	if s == "" {
@@ -372,7 +349,6 @@ func (e CreatedEvent) GetDecimalField(name string) float64 {
 	return f
 }
 
-// GetNestedField extracts a field from a nested object.
 func (e CreatedEvent) GetNestedField(name, subField string) string {
 	v, ok := e.GetField(name)
 	if !ok {
@@ -389,12 +365,10 @@ func (e CreatedEvent) GetNestedField(name, subField string) string {
 	return fmt.Sprintf("%v", sv)
 }
 
-// IsLocked returns true if this is a LockedSimpleHolding.
 func (e CreatedEvent) IsLocked() bool {
 	return strings.Contains(e.TemplateID, "LockedSimpleHolding")
 }
 
-// DAML template IDs used in the bond contract.
 const (
 	TemplateSimpleTokenRules          = "#simple-token:SimpleToken.Rules:SimpleTokenRules"
 	TemplateSimpleHolding             = "#simple-token:SimpleToken.Holding:SimpleHolding"
@@ -415,17 +389,14 @@ const (
 	ChoiceLockedSimpleHoldingUnlock   = "LockedSimpleHolding_Unlock"
 )
 
-// DamlDecimal encodes a float64 as a Daml-LF decimal string (e.g., "1000.0000000000").
 func DamlDecimal(v float64) string {
 	return big.NewFloat(v).Text('f', 10)
 }
 
-// DamlDate formats a date string as expected by Daml (YYYY-MM-DD).
 func DamlDate(date string) string {
 	return date
 }
 
-// InstrumentID returns the Daml InstrumentId JSON structure.
 func InstrumentID(adminParty, code string) map[string]any {
 	return map[string]any{
 		"admin": adminParty,
@@ -451,7 +422,6 @@ func (c *Client) doJSON(req *http.Request, out any) error {
 	return nil
 }
 
-// doRaw performs an HTTP request and decodes the response into a generic map.
 func (c *Client) doRaw(req *http.Request) (map[string]any, error) {
 	resp, err := c.http.Do(req)
 	if err != nil {

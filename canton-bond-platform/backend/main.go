@@ -3,18 +3,15 @@ package main
 import (
 	"fmt"
 	"log"
-
-	"canton-bond-platform/backend/internal/api"
-	"canton-bond-platform/backend/internal/config"
 )
 
 func main() {
-	cfg, err := config.Load()
+	cfg, err := Load()
 	if err != nil {
 		log.Fatalf("config error: %v", err)
 	}
 
-	s := api.NewServer(cfg)
+	s := NewServer(cfg)
 	e := s.Router()
 
 	addr := fmt.Sprintf("%s:%d", cfg.HTTPHost, cfg.HTTPPort)
