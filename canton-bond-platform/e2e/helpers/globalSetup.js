@@ -1,5 +1,5 @@
 async function globalSetup() {
-  const { initFactory, healthCheck } = await import('./api.js');
+  const { initFactory, healthCheck } = require('./api.js');
 
   console.log('Waiting for backend API...');
   let retries = 30;
