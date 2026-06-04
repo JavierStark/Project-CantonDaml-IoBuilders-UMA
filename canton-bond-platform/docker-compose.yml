@@ -151,3 +151,23 @@ services:
     depends_on:
       - backend
     restart: on-failure
+
+  listener:
+    build:
+      context: ./listener
+      dockerfile: Dockerfile
+    container_name: bond-listener
+    environment:
+      - LISTENER_PARTICIPANT_URL=http://participant1:5013
+      - LISTENER_USER_ID=ledger-api-user
+      - LISTENER_POLL_INTERVAL=2s
+      - LISTENER_REQUEST_TIMEOUT=30s
+      - LISTENER_EMIT_INITIAL=false
+    depends_on:
+      participant1:
+        condition: service_started
+      participant2:
+        condition: service_started
+      participant3:
+        condition: service_started
+    restart: on-failure

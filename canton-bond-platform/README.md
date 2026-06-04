@@ -71,6 +71,7 @@ participant2       Up X minutes (healthy)
 participant3       Up X minutes (healthy)
 bond-backend       Up X minutes
 bond-frontend      Up X minutes
+bond-listener      Up X minutes
 ```
 
 ### 3. Initialize the factory contract
@@ -224,6 +225,46 @@ The frontend provides:
 - **Pending** — accept, reject, or withdraw pending transfers
 - **Burn** — burn bonds (owner or admin)
 - **Parties** — view and create parties
+
+## Ledger Listener
+
+The listener is a separate service that polls the Canton JSON API to detect `created` and `archived` events for the bond templates and logs them as JSON lines.
+
+Environment variables (Docker defaults in `docker-compose.yml`):
+- `LISTENER_PARTICIPANT_URL` (default `http://participant1:5013`)
+- `LISTENER_USER_ID` (default `ledger-api-user`)
+- `LISTENER_POLL_INTERVAL` (default `2s`)
+- `LISTENER_REQUEST_TIMEOUT` (default `30s`)
+- `LISTENER_EMIT_INITIAL` (default `false`)
+- `LISTENER_TEMPLATES` (comma-separated list; defaults to bond templates)
+
+To tail logs:
+```bash
+docker logs -f bond-listener
+```
+
+### Verify the listener
+
+1) Confirm the service is running:
+```bash
+docker ps --format "table {{.Names}}\t{{.Status}}"
+```
+
+2) Generate events and watch logs:
+```bash
+curl -s http://localhost:8080/api/v1/factory | jq .
+curl -X POST http://localhost:8080/api/v1/mint \
+  -H "Content-Type: application/json" \
+  -d '{
+    "admin": "admin",
+    "owner": "alice",
+    "amount": 1000,
+    "couponRate": 5.0,
+    "maturityDate": "2028-12-31",
+    "description": "Test Bond"
+  }'
+docker logs -f bond-listener
+```
 
 ## Bond Contract
 
