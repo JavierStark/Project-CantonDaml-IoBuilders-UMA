@@ -116,8 +116,8 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: bond-backend
     ports:
       - "8080:8080"
@@ -154,8 +154,8 @@ services:
 
   listener:
     build:
-      context: ./listener
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: listener/Dockerfile
     container_name: bond-listener
     environment:
       - LISTENER_PARTICIPANT_URL=http://participant1:5013

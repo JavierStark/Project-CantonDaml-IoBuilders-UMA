@@ -1,10 +1,11 @@
 FROM golang:1.26-alpine AS builder
 
-WORKDIR /app
-COPY go.mod ./
-COPY . .
+WORKDIR /build
+COPY pkg/cantonledger ./pkg/cantonledger
+COPY backend ./backend
 
-RUN go build -o /server .
+WORKDIR /build/backend
+RUN go mod download && go build -o /server .
 
 FROM alpine:3.21
 

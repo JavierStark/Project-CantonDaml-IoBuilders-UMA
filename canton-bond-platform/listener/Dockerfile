@@ -1,10 +1,11 @@
 FROM golang:1.26-alpine AS builder
 
-WORKDIR /app
-COPY go.mod ./
-COPY . .
+WORKDIR /build
+COPY pkg/cantonledger ./pkg/cantonledger
+COPY listener ./listener
 
-RUN go build -o /listener .
+WORKDIR /build/listener
+RUN go mod download && go build -o /listener .
 
 FROM alpine:3.21
 
