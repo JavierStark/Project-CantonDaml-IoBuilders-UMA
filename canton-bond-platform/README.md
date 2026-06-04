@@ -154,6 +154,11 @@ The Go backend exposes a REST API at `http://localhost:8080/api/v1/`.
 | POST | /self-transfer | Merge holdings (sender == receiver) |
 | POST | /burn | Burn a holding |
 | GET | /transfer-instructions?party=X | List pending transfers |
+| GET | /allocations?party=X | List allocations for a party |
+| POST | /allocations | Create a new allocation |
+| POST | /allocations/execute | Execute an allocation |
+| POST | /allocations/cancel | Cancel an allocation |
+| POST | /allocations/withdraw | Withdraw an allocation |
 | GET | /factory | Get or create the SimpleTokenRules factory |
 
 ## API Examples
@@ -213,6 +218,56 @@ curl -X POST http://localhost:8080/api/v1/burn \
   }'
 ```
 
+### Create an allocation
+
+```bash
+curl -X POST http://localhost:8080/api/v1/allocations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sender": "alice",
+    "receiver": "bob",
+    "executor": "executor",
+    "amount": 100,
+    "allocateBefore": "2028-12-31T00:00:00Z",
+    "settleBefore": "2029-01-02T00:00:00Z",
+    "settlementRef": "dvp-2028-0001",
+    "transferLegId": "leg-1"
+  }'
+```
+
+### Execute an allocation
+
+```bash
+curl -X POST http://localhost:8080/api/v1/allocations/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "party": "executor",
+    "contractId": "<allocation-contract-id>"
+  }'
+```
+
+### Cancel an allocation
+
+```bash
+curl -X POST http://localhost:8080/api/v1/allocations/cancel \
+  -H "Content-Type: application/json" \
+  -d '{
+    "party": "executor",
+    "contractId": "<allocation-contract-id>"
+  }'
+```
+
+### Withdraw an allocation
+
+```bash
+curl -X POST http://localhost:8080/api/v1/allocations/withdraw \
+  -H "Content-Type: application/json" \
+  -d '{
+    "party": "alice",
+    "contractId": "<allocation-contract-id>"
+  }'
+```
+
 ## Frontend
 
 Open http://localhost:3000 in your browser.
@@ -225,6 +280,7 @@ The frontend provides:
 - **Pending** — accept, reject, or withdraw pending transfers
 - **Burn** — burn bonds (owner or admin)
 - **Parties** — view and create parties
+- **Allocations** — create, list, execute, cancel, and withdraw DvP allocations
 
 ## Ledger Listener
 
@@ -274,7 +330,7 @@ The bond token contract implements the CIP-056 token standard with:
 - **SimpleHolding** — A bond holding with amount, coupon rate, maturity date, and description
 - **LockedSimpleHolding** — Locked holding during two-step transfer
 - **SimpleTransferInstruction** — Pending transfer (accept/reject/withdraw)
-- **SimpleAllocation** — DvP settlement
+- **SimpleAllocation** — DvP allocation supporting execute, cancel, and withdraw workflows
 
 ## Stopping
 

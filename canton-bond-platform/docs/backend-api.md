@@ -415,6 +415,110 @@ TransferInstruction_Withdraw (on SimpleTransferInstruction)
 
 ---
 
+## `GET /api/v1/allocations?party={party}`
+
+**Purpose**: List active DvP allocations for a given party (as admin, sender, receiver, or executor).
+
+**Frontend usage**: Allocations page; aggregated across parties and filtered by dropdown.
+
+**Backend logic**:
+1. Resolves party to participant and full identifier
+2. Calls `POST /v2/state/active-contracts` with template `SimpleAllocation`
+3. Extracts nested `allocation.transferLeg` and `allocation.settlement`
+4. Filters to allocations where `party` is admin, sender, receiver, or executor
+
+**Response**:
+```json
+[
+  {
+    "contractId": "00817f...",
+    "templateId": "#simple-token:SimpleToken.Allocation:SimpleAllocation",
+    "admin": "admin::1220...",
+    "sender": "alice::1220...",
+    "receiver": "bob::1220...",
+    "executor": "executor::1220...",
+    "amount": 100,
+    "instrumentId": "admin::1220...:BOND",
+    "allocateBefore": "2028-12-31T00:00:00Z",
+    "settleBefore": "2029-01-02T00:00:00Z",
+    "lockedHoldingCid": "00be2e..."
+  }
+]
+```
+
+---
+
+## `POST /api/v1/allocations`
+
+**Purpose**: Create a DvP allocation (exercise `AllocationFactory_Allocate`).
+
+**Backend logic**:
+1. Resolves sender/receiver/executor to full identifiers
+2. Finds `SimpleTokenRules` factory on participant1
+3. Selects sender holdings to fund the allocation
+4. Calls `AllocationFactory_Allocate` via the AllocationFactory interface
+
+**Request**:
+```json
+{
+  "sender": "alice",
+  "receiver": "bob",
+  "executor": "executor",
+  "amount": 100,
+  "allocateBefore": "2028-12-31T00:00:00Z",
+  "settleBefore": "2029-01-02T00:00:00Z",
+  "settlementRef": "dvp-2028-0001",
+  "transferLegId": "leg-1"
+}
+```
+
+**Response**:
+```json
+{
+  "status": "created",
+  "offset": 88,
+  "sender": "alice::1220...",
+  "receiver": "bob::1220...",
+  "executor": "executor::1220...",
+  "amount": 100
+}
+```
+
+---
+
+## `POST /api/v1/allocations/execute`
+
+**Purpose**: Execute a funded allocation (exercise `Allocation_ExecuteTransfer`).
+
+**Request**:
+```json
+{ "party": "executor", "contractId": "00be2e..." }
+```
+
+---
+
+## `POST /api/v1/allocations/cancel`
+
+**Purpose**: Cancel an allocation and return funds (exercise `Allocation_Cancel`).
+
+**Request**:
+```json
+{ "party": "alice", "contractId": "00be2e..." }
+```
+
+---
+
+## `POST /api/v1/allocations/withdraw`
+
+**Purpose**: Withdraw an allocation before allocateBefore (exercise `Allocation_Withdraw`).
+
+**Request**:
+```json
+{ "party": "alice", "contractId": "00be2e..." }
+```
+
+---
+
 ## `POST /api/v1/burn`
 
 **Purpose**: Destroy a holding (exercises `Burn` or `BurnByAdmin` choice on `SimpleHolding`).

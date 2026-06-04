@@ -377,6 +377,8 @@ const (
 	TemplateSimpleAllocation          = "#simple-token:SimpleToken.Allocation:SimpleAllocation"
 	TemplateTransferFactory           = "55ba4deb0ad4662c4168b39859738a0e91388d252286480c7331b3f71a517281:Splice.Api.Token.TransferInstructionV1:TransferFactory"
 	TemplateTransferInstruction       = "55ba4deb0ad4662c4168b39859738a0e91388d252286480c7331b3f71a517281:Splice.Api.Token.TransferInstructionV1:TransferInstruction"
+	TemplateAllocationFactory         = "275064aacfe99cea72ee0c80563936129563776f67415ef9f13e4297eecbc520:Splice.Api.Token.AllocationInstructionV1:AllocationFactory"
+	TemplateAllocation                = "93c942ae2b4c2ba674fb152fe38473c507bda4e82b4e4c5da55a552a9d8cce1d:Splice.Api.Token.AllocationV1:Allocation"
 
 	ChoiceMint                        = "Mint"
 	ChoiceTransferOwnership           = "TransferOwnership"
@@ -387,6 +389,10 @@ const (
 	ChoiceTransferInstructionReject   = "TransferInstruction_Reject"
 	ChoiceTransferInstructionWithdraw = "TransferInstruction_Withdraw"
 	ChoiceLockedSimpleHoldingUnlock   = "LockedSimpleHolding_Unlock"
+	ChoiceAllocationFactoryAllocate   = "AllocationFactory_Allocate"
+	ChoiceAllocationExecute           = "Allocation_ExecuteTransfer"
+	ChoiceAllocationCancel            = "Allocation_Cancel"
+	ChoiceAllocationWithdraw          = "Allocation_Withdraw"
 )
 
 func DamlDecimal(v float64) string {
