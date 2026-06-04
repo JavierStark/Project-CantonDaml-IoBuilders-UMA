@@ -15,6 +15,7 @@
             <a href="#" data-page="holdings" data-testid="nav-holdings">Holdings</a>
             <a href="#" data-page="transfer" data-testid="nav-transfer">Transfer</a>
             <a href="#" data-page="pending" data-testid="nav-pending">Pending</a>
+            <a href="#" data-page="allocations" data-testid="nav-allocations">Allocations</a>
             <a href="#" data-page="burn" data-testid="nav-burn">Burn</a>
             <a href="#" data-page="parties" data-testid="nav-parties">Parties</a>
         </nav>
@@ -149,6 +150,62 @@
                     </select>
                 </div>
                 <div id="pendingList" data-testid="pendingList"><p class="loading">Loading...</p></div>
+            </div>
+        </section>
+
+        <section id="page-allocations" class="page" data-testid="page-allocations">
+            <h2>Allocations</h2>
+            <div class="info-box">
+                <h3>How it works</h3>
+                Allocations are DvP settlement contracts (<code>SimpleAllocation</code>). They are visible to <code>admin</code>, the transfer sender/receiver, and the settlement executor. This view lists active allocations across participants based on the selected party.
+            </div>
+            <div class="card">
+                <h3>Create Allocation</h3>
+                <form id="allocationForm" data-testid="allocationForm">
+                    <div class="form-row">
+                        <label>Sender</label>
+                        <select id="allocationSender" required data-testid="allocationSender"></select>
+                    </div>
+                    <div class="form-row">
+                        <label>Receiver</label>
+                        <select id="allocationReceiver" required data-testid="allocationReceiver"></select>
+                    </div>
+                    <div class="form-row">
+                        <label>Executor</label>
+                        <select id="allocationExecutor" required data-testid="allocationExecutor"></select>
+                    </div>
+                    <div class="form-row">
+                        <label>Amount</label>
+                        <input type="number" id="allocationAmount" step="0.01" min="0.01" required data-testid="allocationAmount">
+                    </div>
+                    <div class="form-row">
+                        <label>Allocate Before (UTC)</label>
+                        <input type="datetime-local" id="allocationAllocateBefore" required data-testid="allocationAllocateBefore">
+                    </div>
+                    <div class="form-row">
+                        <label>Settle Before (UTC)</label>
+                        <input type="datetime-local" id="allocationSettleBefore" required data-testid="allocationSettleBefore">
+                    </div>
+                    <div class="form-row">
+                        <label>Settlement Ref (optional)</label>
+                        <input type="text" id="allocationSettlementRef" placeholder="e.g. dvp-2028-0001" data-testid="allocationSettlementRef">
+                    </div>
+                    <div class="form-row">
+                        <label>Transfer Leg ID (optional)</label>
+                        <input type="text" id="allocationTransferLegId" placeholder="e.g. leg-1" data-testid="allocationTransferLegId">
+                    </div>
+                    <button type="submit" data-testid="allocationSubmit">Create Allocation</button>
+                </form>
+                <div id="allocationResult" class="result" data-testid="allocationResult"></div>
+            </div>
+            <div class="card">
+                <div class="filter-row">
+                    <label>Filter by party:</label>
+                    <select id="allocationsFilter" data-testid="allocationsFilter">
+                        <option value="">All Parties</option>
+                    </select>
+                </div>
+                <div id="allocationsList" data-testid="allocationsList"><p class="loading">Loading...</p></div>
             </div>
         </section>
 

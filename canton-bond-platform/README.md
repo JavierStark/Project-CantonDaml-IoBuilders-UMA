@@ -71,6 +71,7 @@ participant2       Up X minutes (healthy)
 participant3       Up X minutes (healthy)
 bond-backend       Up X minutes
 bond-frontend      Up X minutes
+bond-listener      Up X minutes
 ```
 
 ### 3. Initialize the factory contract
@@ -153,6 +154,11 @@ The Go backend exposes a REST API at `http://localhost:8080/api/v1/`.
 | POST | /self-transfer | Merge holdings (sender == receiver) |
 | POST | /burn | Burn a holding |
 | GET | /transfer-instructions?party=X | List pending transfers |
+| GET | /allocations?party=X | List allocations for a party |
+| POST | /allocations | Create a new allocation |
+| POST | /allocations/execute | Execute an allocation |
+| POST | /allocations/cancel | Cancel an allocation |
+| POST | /allocations/withdraw | Withdraw an allocation |
 | GET | /factory | Get or create the SimpleTokenRules factory |
 
 ## API Examples
@@ -212,6 +218,56 @@ curl -X POST http://localhost:8080/api/v1/burn \
   }'
 ```
 
+### Create an allocation
+
+```bash
+curl -X POST http://localhost:8080/api/v1/allocations \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sender": "alice",
+    "receiver": "bob",
+    "executor": "executor",
+    "amount": 100,
+    "allocateBefore": "2028-12-31T00:00:00Z",
+    "settleBefore": "2029-01-02T00:00:00Z",
+    "settlementRef": "dvp-2028-0001",
+    "transferLegId": "leg-1"
+  }'
+```
+
+### Execute an allocation
+
+```bash
+curl -X POST http://localhost:8080/api/v1/allocations/execute \
+  -H "Content-Type: application/json" \
+  -d '{
+    "party": "executor",
+    "contractId": "<allocation-contract-id>"
+  }'
+```
+
+### Cancel an allocation
+
+```bash
+curl -X POST http://localhost:8080/api/v1/allocations/cancel \
+  -H "Content-Type: application/json" \
+  -d '{
+    "party": "executor",
+    "contractId": "<allocation-contract-id>"
+  }'
+```
+
+### Withdraw an allocation
+
+```bash
+curl -X POST http://localhost:8080/api/v1/allocations/withdraw \
+  -H "Content-Type: application/json" \
+  -d '{
+    "party": "alice",
+    "contractId": "<allocation-contract-id>"
+  }'
+```
+
 ## Frontend
 
 Open http://localhost:3000 in your browser.
@@ -224,6 +280,47 @@ The frontend provides:
 - **Pending** — accept, reject, or withdraw pending transfers
 - **Burn** — burn bonds (owner or admin)
 - **Parties** — view and create parties
+- **Allocations** — create, list, execute, cancel, and withdraw DvP allocations
+
+## Ledger Listener
+
+The listener is a separate service that polls the Canton JSON API to detect `created` and `archived` events for the bond templates and logs them as JSON lines.
+
+Environment variables (Docker defaults in `docker-compose.yml`):
+- `LISTENER_PARTICIPANT_URL` (default `http://participant1:5013`)
+- `LISTENER_USER_ID` (default `ledger-api-user`)
+- `LISTENER_POLL_INTERVAL` (default `2s`)
+- `LISTENER_REQUEST_TIMEOUT` (default `30s`)
+- `LISTENER_EMIT_INITIAL` (default `false`)
+- `LISTENER_TEMPLATES` (comma-separated list; defaults to bond templates)
+
+To tail logs:
+```bash
+docker logs -f bond-listener
+```
+
+### Verify the listener
+
+1) Confirm the service is running:
+```bash
+docker ps --format "table {{.Names}}\t{{.Status}}"
+```
+
+2) Generate events and watch logs:
+```bash
+curl -s http://localhost:8080/api/v1/factory | jq .
+curl -X POST http://localhost:8080/api/v1/mint \
+  -H "Content-Type: application/json" \
+  -d '{
+    "admin": "admin",
+    "owner": "alice",
+    "amount": 1000,
+    "couponRate": 5.0,
+    "maturityDate": "2028-12-31",
+    "description": "Test Bond"
+  }'
+docker logs -f bond-listener
+```
 
 ## Bond Contract
 
@@ -233,7 +330,7 @@ The bond token contract implements the CIP-056 token standard with:
 - **SimpleHolding** — A bond holding with amount, coupon rate, maturity date, and description
 - **LockedSimpleHolding** — Locked holding during two-step transfer
 - **SimpleTransferInstruction** — Pending transfer (accept/reject/withdraw)
-- **SimpleAllocation** — DvP settlement
+- **SimpleAllocation** — DvP allocation supporting execute, cancel, and withdraw workflows
 
 ## Stopping
 

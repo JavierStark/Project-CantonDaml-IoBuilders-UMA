@@ -61,6 +61,7 @@ async function loadPageData(page) {
         case 'dashboard': loadDashboard(); break;
         case 'holdings': loadHoldings(); break;
         case 'pending': loadPending(); break;
+        case 'allocations': loadAllocations(); break;
         case 'burn': loadBurnHoldings(); break;
         case 'mint': populatePartySelects(); break;
         case 'transfer': populatePartySelects(); break;
@@ -164,6 +165,33 @@ async function loadPending() {
     }
 }
 
+async function loadAllocations() {
+    try {
+        const filter = $('allocationsFilter').value;
+        const byContract = new Map();
+        for (const p of uniqueParties(parties)) {
+            const token = partyToken(p);
+            if (!token) continue;
+            if (filter && token !== filter) continue;
+            try {
+                const list = await api(`/allocations?party=${token}`);
+                for (const row of list) {
+                    if (!byContract.has(row.contractId)) {
+                        byContract.set(row.contractId, row);
+                    }
+                }
+            } catch (err) {
+                console.warn(`Failed to load allocations for ${token}:`, err);
+            }
+        }
+        const values = Array.from(byContract.values());
+        values.sort((a, b) => (a.allocateBefore || '').localeCompare(b.allocateBefore || ''));
+        renderAllocationsTable(values);
+    } catch (err) {
+        $('allocationsList').innerHTML = `<p class="error">${err.message}</p>`;
+    }
+}
+
 async function loadPendingData(partyList = parties) {
     const byContract = new Map();
     for (const p of uniqueParties(partyList)) {
@@ -264,6 +292,31 @@ function renderPendingTable(data) {
     el.innerHTML = html;
 }
 
+function renderAllocationsTable(data) {
+    const el = $('allocationsList');
+    if (!data.length) {
+        el.innerHTML = '<p>No allocations found.</p>';
+        return;
+    }
+    let html = `<table><thead><tr>
+        <th>Sender</th><th>Receiver</th><th>Executor</th><th>Amount</th><th>Instrument</th><th>Allocate Before</th><th>Settle Before</th><th>Contract ID</th>
+    </tr></thead><tbody>`;
+    for (const a of data) {
+        html += `<tr>
+            <td>${shortName(a.sender)}</td>
+            <td>${shortName(a.receiver)}</td>
+            <td>${shortName(a.executor)}</td>
+            <td>${a.amount}</td>
+            <td>${a.instrumentId || '-'}</td>
+            <td>${a.allocateBefore || '-'}</td>
+            <td>${a.settleBefore || '-'}</td>
+            <td style="font-size:0.75rem;max-width:200px;overflow:hidden;text-overflow:ellipsis">${a.contractId}</td>
+        </tr>`;
+    }
+    html += '</tbody></table>';
+    el.innerHTML = html;
+}
+
 function renderPartiesTable(data) {
     const el = $('partyList');
     if (!data.length) {
@@ -302,13 +355,13 @@ function uniqueParties(list) {
 }
 
 function populatePartySelects() {
-    const selects = ['mintAdmin', 'mintOwner', 'transferSender', 'transferReceiver', 'burnParty', 'holdingsFilter', 'pendingFilter'];
+    const selects = ['mintAdmin', 'mintOwner', 'transferSender', 'transferReceiver', 'burnParty', 'holdingsFilter', 'pendingFilter', 'allocationsFilter'];
     const unique = uniqueParties(parties);
     for (const id of selects) {
         const sel = $(id);
         if (!sel) continue;
         const current = sel.value;
-        sel.innerHTML = id === 'holdingsFilter' || id === 'pendingFilter' ? '<option value="">All</option>' : '';
+        sel.innerHTML = id === 'holdingsFilter' || id === 'pendingFilter' || id === 'allocationsFilter' ? '<option value="">All</option>' : '';
         for (const p of unique) {
             const token = partyToken(p);
             const opt = document.createElement('option');
@@ -344,35 +397,6 @@ function fillBurn(cid) {
     $('burnContractId').value = cid;
     $('burnContractId').scrollIntoView({ behavior: 'smooth' });
 }
-
-// ---- Event Delegation (for dynamic buttons in ES module mode) ----
-document.addEventListener('click', e => {
-    const btn = e.target.closest('[data-action]');
-    if (!btn) return;
-    const action = btn.dataset.action;
-    const cid = btn.dataset.cid;
-    const party = btn.dataset.party;
-    switch (action) {
-        case 'fill-burn':
-            fillBurn(cid);
-            break;
-        case 'accept-transfer':
-            if (confirm('Accept this transfer?')) {
-                acceptTransfer(cid, party);
-            }
-            break;
-        case 'reject-transfer':
-            if (confirm('Reject this transfer?')) {
-                rejectTransfer(cid, party);
-            }
-            break;
-        case 'withdraw-transfer':
-            if (confirm('Withdraw this transfer?')) {
-                withdrawTransfer(cid, party);
-            }
-            break;
-    }
-});
 
 // ---- Event Handlers ----
 
@@ -496,6 +520,83 @@ $('burnForm').addEventListener('submit', async e => {
     }
 });
 
+// Allocation create
+$('allocationForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button');
+    const result = $('allocationResult');
+    hideResult(result);
+    if (!requireFactoryReady(result)) return;
+    btn.disabled = true;
+    try {
+        const data = await api('/allocations', {
+            method: 'POST',
+            body: {
+                sender: $('allocationSender').value,
+                receiver: $('allocationReceiver').value,
+                executor: $('allocationExecutor').value,
+                amount: parseFloat($('allocationAmount').value),
+                allocateBefore: toISOStringFromLocal($('allocationAllocateBefore').value),
+                settleBefore: toISOStringFromLocal($('allocationSettleBefore').value),
+                settlementRef: $('allocationSettlementRef').value.trim(),
+                transferLegId: $('allocationTransferLegId').value.trim(),
+            },
+        });
+        showResult(result, `Allocation created! Offset: ${data.offset}`);
+        setTimeout(() => { loadAllocations(); loadDashboard(); }, 1000);
+    } catch (err) {
+        showResult(result, err.message, true);
+    } finally {
+        btn.disabled = false;
+    }
+});
+
+// Allocation actions
+async function executeAllocation(cid, party) {
+    if (!confirm('Execute this allocation?')) return;
+    try {
+        await api('/allocations/execute', {
+            method: 'POST',
+            body: { party, contractId: cid },
+        });
+        alert('Allocation executed!');
+        loadAllocations();
+        loadDashboard();
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+async function cancelAllocation(cid, party) {
+    if (!confirm('Cancel this allocation?')) return;
+    try {
+        await api('/allocations/cancel', {
+            method: 'POST',
+            body: { party, contractId: cid },
+        });
+        alert('Allocation canceled!');
+        loadAllocations();
+        loadDashboard();
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+async function withdrawAllocation(cid, party) {
+    if (!confirm('Withdraw this allocation?')) return;
+    try {
+        await api('/allocations/withdraw', {
+            method: 'POST',
+            body: { party, contractId: cid },
+        });
+        alert('Allocation withdrawn!');
+        loadAllocations();
+        loadDashboard();
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
 $('partyForm').addEventListener('submit', async e => {
     e.preventDefault();
     const btn = e.target.querySelector('button');
@@ -521,6 +622,7 @@ $('partyForm').addEventListener('submit', async e => {
 
 $('holdingsFilter').addEventListener('change', loadHoldings);
 $('pendingFilter').addEventListener('change', loadPending);
+$('allocationsFilter').addEventListener('change', loadAllocations);
 $('burnParty').addEventListener('change', loadBurnHoldings);
 
 // Init - auto-create factory

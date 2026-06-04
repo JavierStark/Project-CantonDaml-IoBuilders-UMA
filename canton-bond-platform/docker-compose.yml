@@ -116,8 +116,8 @@ services:
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: backend/Dockerfile
     container_name: bond-backend
     ports:
       - "8080:8080"
@@ -150,4 +150,24 @@ services:
       - "3000:80"
     depends_on:
       - backend
+    restart: on-failure
+
+  listener:
+    build:
+      context: .
+      dockerfile: listener/Dockerfile
+    container_name: bond-listener
+    environment:
+      - LISTENER_PARTICIPANT_URL=http://participant1:5013
+      - LISTENER_USER_ID=ledger-api-user
+      - LISTENER_POLL_INTERVAL=2s
+      - LISTENER_REQUEST_TIMEOUT=30s
+      - LISTENER_EMIT_INITIAL=false
+    depends_on:
+      participant1:
+        condition: service_started
+      participant2:
+        condition: service_started
+      participant3:
+        condition: service_started
     restart: on-failure

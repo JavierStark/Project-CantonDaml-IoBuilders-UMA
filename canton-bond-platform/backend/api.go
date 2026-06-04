@@ -12,18 +12,17 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
-	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
 )
 
 type Server struct {
 	cfg     Config
-	clients map[string]*Client
+	clients map[string]*cantonledger.Client
 }
 
 func NewServer(cfg Config) *Server {
-	clients := make(map[string]*Client)
+	clients := make(map[string]*cantonledger.Client)
 	for _, p := range cfg.Participants {
-		clients[p.Name] = New(p.URL, cfg.UserID, cfg.RequestTimeout)
+		clients[p.Name] = cantonledger.New(p.URL, cfg.UserID, cfg.RequestTimeout)
 	}
 	return &Server{cfg: cfg, clients: clients}
 }
@@ -55,13 +54,18 @@ func (s *Server) Router() *echo.Echo {
 	v1.POST("/burn", s.handleBurn)
 	v1.POST("/self-transfer", s.handleSelfTransfer)
 	v1.GET("/transfer-instructions", s.handleListTransferInstructions)
+	v1.GET("/allocations", s.handleListAllocations)
+	v1.POST("/allocations", s.handleCreateAllocation)
+	v1.POST("/allocations/execute", s.handleExecuteAllocation)
+	v1.POST("/allocations/cancel", s.handleCancelAllocation)
+	v1.POST("/allocations/withdraw", s.handleWithdrawAllocation)
 	v1.GET("/factory", s.handleFactory)
 	v1.POST("/factory", s.handleFactory)
 
 	return e
 }
 
-func (s *Server) clientForParty(party string) (*Client, error) {
+func (s *Server) clientForParty(party string) (*cantonledger.Client, error) {
 	party = strings.TrimSpace(party)
 	p := s.cfg.PartyToParticipant(party)
 	if p == nil {
@@ -101,7 +105,7 @@ func (s *Server) clientForParty(party string) (*Client, error) {
 	return client, nil
 }
 
-func (s *Server) lookupPartyIdentifier(ctx context.Context, client *Client, partyName string) (string, error) {
+func (s *Server) lookupPartyIdentifier(ctx context.Context, client *cantonledger.Client, partyName string) (string, error) {
 	partyName = strings.TrimSpace(partyName)
 	partyShort := strings.SplitN(partyName, "::", 2)[0]
 	parties, err := client.Parties(ctx)
@@ -221,17 +225,17 @@ func (s *Server) handleListHoldings(c echo.Context) error {
 	}
 
 	resp, err := client.ActiveContracts(ctx, offset,
-		TemplateSimpleHolding,
-		TemplateLockedSimpleHolding,
+		cantonledger.TemplateSimpleHolding,
+		cantonledger.TemplateLockedSimpleHolding,
 	)
 	if err != nil {
 		log.Printf("active-contracts error: %v", err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query active contracts"})
 	}
 
-	events := ExtractCreatedEvents(resp,
-		TemplateSimpleHolding,
-		TemplateLockedSimpleHolding,
+	events := cantonledger.ExtractCreatedEvents(resp,
+		cantonledger.TemplateSimpleHolding,
+		cantonledger.TemplateLockedSimpleHolding,
 	)
 
 	var holdings []map[string]any
@@ -324,12 +328,12 @@ func (s *Server) handleMint(c echo.Context) error {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
 	}
 
-	resp, err := client.ActiveContracts(ctx, offset, TemplateSimpleTokenRules)
+	resp, err := client.ActiveContracts(ctx, offset, cantonledger.TemplateSimpleTokenRules)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query factory"})
 	}
 
-	events := ExtractCreatedEvents(resp, TemplateSimpleTokenRules)
+	events := cantonledger.ExtractCreatedEvents(resp, cantonledger.TemplateSimpleTokenRules)
 	if len(events) == 0 {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "no SimpleTokenRules factory found. Create one via GET or POST /api/v1/factory"})
 	}
@@ -338,18 +342,18 @@ func (s *Server) handleMint(c echo.Context) error {
 
 	choiceArg := map[string]any{
 		"owner":        ownerID,
-		"instrumentId": InstrumentID(adminID, "BOND"),
-		"amount":       DamlDecimal(req.Amount),
-		"couponRate":   DamlDecimal(req.CouponRate),
+		"instrumentId": cantonledger.InstrumentID(adminID, "BOND"),
+		"amount":       cantonledger.DamlDecimal(req.Amount),
+		"couponRate":   cantonledger.DamlDecimal(req.CouponRate),
 		"maturityDate": req.MaturityDate,
 		"description":  req.Description,
 	}
 
 	cmdID := newCommandID("mint")
-	submitReq := Command{
-		ExerciseCommand: &ExerciseCommand{
-			TemplateID:     TemplateSimpleTokenRules,
-			Choice:         ChoiceMint,
+	submitReq := cantonledger.Command{
+		ExerciseCommand: &cantonledger.ExerciseCommand{
+			TemplateID:     cantonledger.TemplateSimpleTokenRules,
+			Choice:         cantonledger.ChoiceMint,
 			ContractID:     factoryCID,
 			ChoiceArgument: choiceArg,
 		},
@@ -422,11 +426,11 @@ func (s *Server) handleTransfer(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query factory ledger end"})
 	}
-	factoryResp, err := factoryClient.ActiveContracts(ctx, factoryOffset, TemplateSimpleTokenRules)
+	factoryResp, err := factoryClient.ActiveContracts(ctx, factoryOffset, cantonledger.TemplateSimpleTokenRules)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query factory"})
 	}
-	factoryEvents := ExtractCreatedEvents(factoryResp, TemplateSimpleTokenRules)
+	factoryEvents := cantonledger.ExtractCreatedEvents(factoryResp, cantonledger.TemplateSimpleTokenRules)
 	if len(factoryEvents) == 0 {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "no SimpleTokenRules factory found"})
 	}
@@ -437,13 +441,13 @@ func (s *Server) handleTransfer(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
 	}
-	holdingsResp, err := client.ActiveContracts(ctx, holdingsOffset, TemplateSimpleHolding)
+	holdingsResp, err := client.ActiveContracts(ctx, holdingsOffset, cantonledger.TemplateSimpleHolding)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query holdings"})
 	}
-	holdingsEvents := ExtractCreatedEvents(holdingsResp,
-		TemplateSimpleHolding,
-		TemplateLockedSimpleHolding,
+	holdingsEvents := cantonledger.ExtractCreatedEvents(holdingsResp,
+		cantonledger.TemplateSimpleHolding,
+		cantonledger.TemplateLockedSimpleHolding,
 	)
 
 	var inputCIDs []string
@@ -505,8 +509,8 @@ func (s *Server) handleTransfer(c echo.Context) error {
 	transferArg := map[string]any{
 		"sender":           senderID,
 		"receiver":         receiverID,
-		"amount":           DamlDecimal(req.Amount),
-		"instrumentId":     InstrumentID(factoryAdmin, "BOND"),
+		"amount":           cantonledger.DamlDecimal(req.Amount),
+		"instrumentId":     cantonledger.InstrumentID(factoryAdmin, "BOND"),
 		"requestedAt":      time.Now().UTC().Format("2006-01-02T15:04:05.000000Z"),
 		"executeBefore":    time.Now().UTC().Add(24 * time.Hour).Format("2006-01-02T15:04:05.000000Z"),
 		"inputHoldingCids": inputCIDs,
@@ -519,10 +523,10 @@ func (s *Server) handleTransfer(c echo.Context) error {
 	}
 
 	cmdID := newCommandID("transfer")
-	submitReq := Command{
-		ExerciseCommand: &ExerciseCommand{
-			TemplateID:     TemplateTransferFactory,
-			Choice:         ChoiceTransferFactoryTransfer,
+	submitReq := cantonledger.Command{
+		ExerciseCommand: &cantonledger.ExerciseCommand{
+			TemplateID:     cantonledger.TemplateTransferFactory,
+			Choice:         cantonledger.ChoiceTransferFactoryTransfer,
 			ContractID:     factoryCID,
 			ChoiceArgument: choiceArg,
 		},
@@ -549,15 +553,15 @@ type transferActionRequest struct {
 }
 
 func (s *Server) handleAcceptTransfer(c echo.Context) error {
-	return s.handleTransferAction(c, ChoiceTransferInstructionAccept, "accept")
+	return s.handleTransferAction(c, cantonledger.ChoiceTransferInstructionAccept, "accept")
 }
 
 func (s *Server) handleRejectTransfer(c echo.Context) error {
-	return s.handleTransferAction(c, ChoiceTransferInstructionReject, "reject")
+	return s.handleTransferAction(c, cantonledger.ChoiceTransferInstructionReject, "reject")
 }
 
 func (s *Server) handleWithdrawTransfer(c echo.Context) error {
-	return s.handleTransferAction(c, ChoiceTransferInstructionWithdraw, "withdraw")
+	return s.handleTransferAction(c, cantonledger.ChoiceTransferInstructionWithdraw, "withdraw")
 }
 
 func (s *Server) handleTransferAction(c echo.Context, choice, action string) error {
@@ -583,9 +587,9 @@ func (s *Server) handleTransferAction(c echo.Context, choice, action string) err
 	}
 
 	cmdID := newCommandID(action)
-	submitReq := Command{
-		ExerciseCommand: &ExerciseCommand{
-			TemplateID:  TemplateTransferInstruction,
+	submitReq := cantonledger.Command{
+		ExerciseCommand: &cantonledger.ExerciseCommand{
+			TemplateID:  cantonledger.TemplateTransferInstruction,
 			Choice:      choice,
 			ContractID:  req.ContractID,
 			ChoiceArgument: map[string]any{
@@ -633,11 +637,11 @@ func (s *Server) handleBurn(c echo.Context) error {
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
 	}
-	contracts, err := client.ActiveContracts(ctx, offset, TemplateSimpleHolding)
+	contracts, err := client.ActiveContracts(ctx, offset, cantonledger.TemplateSimpleHolding)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query holdings"})
 	}
-	events := ExtractCreatedEvents(contracts, TemplateSimpleHolding)
+	events := cantonledger.ExtractCreatedEvents(contracts, cantonledger.TemplateSimpleHolding)
 
 	var adminID, ownerID string
 	found := false
@@ -653,15 +657,15 @@ func (s *Server) handleBurn(c echo.Context) error {
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "holding contract not found"})
 	}
 
-	choice := ChoiceBurn
+	choice := cantonledger.ChoiceBurn
 	if req.AsAdmin {
-		choice = ChoiceBurnByAdmin
+		choice = cantonledger.ChoiceBurnByAdmin
 	}
 
 	cmdID := newCommandID("burn")
-	submitReq := Command{
-		ExerciseCommand: &ExerciseCommand{
-			TemplateID:     TemplateSimpleHolding,
+	submitReq := cantonledger.Command{
+		ExerciseCommand: &cantonledger.ExerciseCommand{
+			TemplateID:     cantonledger.TemplateSimpleHolding,
 			Choice:         choice,
 			ContractID:     req.ContractID,
 			ChoiceArgument: map[string]any{},
@@ -719,12 +723,12 @@ func (s *Server) handleListTransferInstructions(c echo.Context) error {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
 	}
 
-	resp, err := client.ActiveContracts(ctx, offset, TemplateSimpleTransferInstruction)
+	resp, err := client.ActiveContracts(ctx, offset, cantonledger.TemplateSimpleTransferInstruction)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query transfer instructions"})
 	}
 
-	events := ExtractCreatedEvents(resp, TemplateSimpleTransferInstruction)
+	events := cantonledger.ExtractCreatedEvents(resp, cantonledger.TemplateSimpleTransferInstruction)
 
 	var transfers []map[string]any
 	for _, evt := range events {
@@ -776,6 +780,367 @@ func (s *Server) handleListTransferInstructions(c echo.Context) error {
 	return c.JSON(http.StatusOK, transfers)
 }
 
+func (s *Server) handleListAllocations(c echo.Context) error {
+	party := c.QueryParam("party")
+	if party == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "party query parameter is required"})
+	}
+
+	client, err := s.clientForParty(party)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request().Context(), s.cfg.RequestTimeout)
+	defer cancel()
+
+	partyID, err := s.lookupPartyIdentifier(ctx, client, party)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "party not found"})
+	}
+
+	offset, err := client.LedgerEnd(ctx)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
+	}
+
+	resp, err := client.ActiveContracts(ctx, offset, cantonledger.TemplateSimpleAllocation)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query allocations"})
+	}
+
+	events := cantonledger.ExtractCreatedEvents(resp, cantonledger.TemplateSimpleAllocation)
+
+	getString := func(m map[string]any, key string) string {
+		if m == nil {
+			return ""
+		}
+		if v, ok := m[key]; ok {
+			switch s := v.(type) {
+			case string:
+				return s
+			default:
+				return fmt.Sprintf("%v", s)
+			}
+		}
+		return ""
+	}
+
+	parseAmount := func(v any) float64 {
+		switch t := v.(type) {
+		case string:
+			var amt float64
+			fmt.Sscanf(t, "%f", &amt)
+			return amt
+		case float64:
+			return t
+		default:
+			return 0
+		}
+	}
+
+	var allocations []map[string]any
+	for _, evt := range events {
+		admin := evt.GetStringField("admin")
+		allocRaw, ok := evt.GetField("allocation")
+		if !ok {
+			log.Printf("allocations: contract %s missing allocation field", evt.ContractID)
+			continue
+		}
+		allocMap, ok := allocRaw.(map[string]any)
+		if !ok {
+			log.Printf("allocations: contract %s allocation field has unexpected type %T", evt.ContractID, allocRaw)
+			continue
+		}
+
+		transferLeg, _ := allocMap["transferLeg"].(map[string]any)
+		settlement, _ := allocMap["settlement"].(map[string]any)
+		sender := getString(transferLeg, "sender")
+		receiver := getString(transferLeg, "receiver")
+		executor := getString(settlement, "executor")
+
+		if partyID != admin && partyID != sender && partyID != receiver && partyID != executor {
+			continue
+		}
+
+		amount := parseAmount(transferLeg["amount"])
+		instrument := ""
+		if instRaw, ok := transferLeg["instrumentId"]; ok {
+			if instMap, ok := instRaw.(map[string]any); ok {
+				instAdmin := fmt.Sprintf("%v", instMap["admin"])
+				instID := fmt.Sprintf("%v", instMap["id"])
+				instrument = fmt.Sprintf("%s:%s", instAdmin, instID)
+			}
+		}
+
+		allocations = append(allocations, map[string]any{
+			"contractId":       evt.ContractID,
+			"templateId":       evt.TemplateID,
+			"admin":            admin,
+			"sender":           sender,
+			"receiver":         receiver,
+			"executor":         executor,
+			"amount":           amount,
+			"instrumentId":     instrument,
+			"allocateBefore":   getString(settlement, "allocateBefore"),
+			"settleBefore":     getString(settlement, "settleBefore"),
+			"lockedHoldingCid": evt.GetStringField("lockedHoldingCid"),
+		})
+	}
+
+	if allocations == nil {
+		allocations = []map[string]any{}
+	}
+	return c.JSON(http.StatusOK, allocations)
+}
+
+type allocationRequest struct {
+	Sender         string  `json:"sender"`
+	Receiver       string  `json:"receiver"`
+	Executor       string  `json:"executor"`
+	Amount         float64 `json:"amount"`
+	AllocateBefore string  `json:"allocateBefore"`
+	SettleBefore   string  `json:"settleBefore"`
+	SettlementRef  string  `json:"settlementRef"`
+	TransferLegID  string  `json:"transferLegId"`
+}
+
+func (s *Server) handleCreateAllocation(c echo.Context) error {
+	var req allocationRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	if req.Sender == "" || req.Receiver == "" || req.Executor == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "sender, receiver, and executor are required"})
+	}
+	if req.Amount <= 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "amount must be positive"})
+	}
+	if req.AllocateBefore == "" || req.SettleBefore == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "allocateBefore and settleBefore are required"})
+	}
+
+	senderClient, err := s.clientForParty(req.Sender)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "sender: " + err.Error()})
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request().Context(), s.cfg.RequestTimeout)
+	defer cancel()
+
+	senderID, err := s.lookupPartyIdentifier(ctx, senderClient, req.Sender)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "sender party not found"})
+	}
+	receiverClient, err := s.clientForParty(req.Receiver)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "receiver: " + err.Error()})
+	}
+	receiverID, err := s.lookupPartyIdentifier(ctx, receiverClient, req.Receiver)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "receiver party not found"})
+	}
+	executorClient, err := s.clientForParty(req.Executor)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "executor: " + err.Error()})
+	}
+	executorID, err := s.lookupPartyIdentifier(ctx, executorClient, req.Executor)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "executor party not found"})
+	}
+
+	factoryClient, ok := s.clients["participant1"]
+	if !ok {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "no participant1 client for factory lookup"})
+	}
+
+	factoryOffset, err := factoryClient.LedgerEnd(ctx)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query factory ledger end"})
+	}
+	factoryResp, err := factoryClient.ActiveContracts(ctx, factoryOffset, cantonledger.TemplateSimpleTokenRules)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query factory"})
+	}
+	factoryEvents := cantonledger.ExtractCreatedEvents(factoryResp, cantonledger.TemplateSimpleTokenRules)
+	if len(factoryEvents) == 0 {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "no SimpleTokenRules factory found"})
+	}
+	factoryCID := factoryEvents[0].ContractID
+	factoryAdmin := factoryEvents[0].GetStringField("admin")
+
+	client := senderClient
+	holdingsOffset, err := client.LedgerEnd(ctx)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
+	}
+	holdingsResp, err := client.ActiveContracts(ctx, holdingsOffset, cantonledger.TemplateSimpleHolding)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query holdings"})
+	}
+	holdingsEvents := cantonledger.ExtractCreatedEvents(holdingsResp,
+		cantonledger.TemplateSimpleHolding,
+		cantonledger.TemplateLockedSimpleHolding,
+	)
+
+	var inputCIDs []string
+	remaining := req.Amount
+	for _, evt := range holdingsEvents {
+		if remaining <= 0 {
+			break
+		}
+		owner := evt.GetStringField("owner")
+		if owner != senderID {
+			continue
+		}
+		if evt.IsLocked() {
+			continue
+		}
+		amt := evt.GetDecimalField("amount")
+		if amt <= 0 {
+			continue
+		}
+		inputCIDs = append(inputCIDs, evt.ContractID)
+		remaining -= amt
+	}
+
+	if remaining > 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("insufficient holdings: need %.2f more", remaining)})
+	}
+
+	settlementRef := strings.TrimSpace(req.SettlementRef)
+	if settlementRef == "" {
+		settlementRef = fmt.Sprintf("settlement-%s", time.Now().UTC().Format("20060102T150405.000000Z"))
+	}
+	transferLegID := strings.TrimSpace(req.TransferLegID)
+	if transferLegID == "" {
+		transferLegID = fmt.Sprintf("leg-%s", time.Now().UTC().Format("20060102T150405.000000Z"))
+	}
+	requestedAt := time.Now().UTC().Format("2006-01-02T15:04:05.000000Z")
+
+	allocationArg := map[string]any{
+		"transferLeg": map[string]any{
+			"sender": senderID,
+			"receiver": receiverID,
+			"amount": cantonledger.DamlDecimal(req.Amount),
+			"instrumentId": cantonledger.InstrumentID(factoryAdmin, "BOND"),
+			"meta": map[string]any{
+				"values": map[string]any{},
+			},
+		},
+		"settlement": map[string]any{
+			"executor": executorID,
+			"settlementRef": map[string]any{
+				"id":  settlementRef,
+				"cid": nil,
+			},
+			"requestedAt": requestedAt,
+			"allocateBefore": req.AllocateBefore,
+			"settleBefore": req.SettleBefore,
+			"meta": map[string]any{
+				"values": map[string]any{},
+			},
+		},
+		"transferLegId": transferLegID,
+	}
+
+	choiceArg := map[string]any{
+		"expectedAdmin": factoryAdmin,
+		"allocation":    allocationArg,
+		"inputHoldingCids": inputCIDs,
+		"requestedAt":   requestedAt,
+		"extraArgs":     map[string]any{"context": map[string]any{"values": map[string]any{}}, "meta": map[string]any{"values": map[string]any{}}},
+	}
+
+	cmdID := newCommandID("allocate")
+	submitReq := cantonledger.Command{
+		ExerciseCommand: &cantonledger.ExerciseCommand{
+			TemplateID:     cantonledger.TemplateAllocationFactory,
+			Choice:         cantonledger.ChoiceAllocationFactoryAllocate,
+			ContractID:     factoryCID,
+			ChoiceArgument: choiceArg,
+		},
+	}
+
+	offset, err := client.SubmitCommand(ctx, cmdID, submitReq, []string{senderID})
+	if err != nil {
+		log.Printf("allocation error: %v", err)
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("allocation failed: %v", err)})
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"status":   "created",
+		"offset":   offset,
+		"sender":   senderID,
+		"receiver": receiverID,
+		"executor": executorID,
+		"amount":   req.Amount,
+	})
+}
+
+type allocationActionRequest struct {
+	Party      string `json:"party"`
+	ContractID string `json:"contractId"`
+}
+
+func (s *Server) handleExecuteAllocation(c echo.Context) error {
+	return s.handleAllocationAction(c, cantonledger.ChoiceAllocationExecute, "execute")
+}
+
+func (s *Server) handleCancelAllocation(c echo.Context) error {
+	return s.handleAllocationAction(c, cantonledger.ChoiceAllocationCancel, "cancel")
+}
+
+func (s *Server) handleWithdrawAllocation(c echo.Context) error {
+	return s.handleAllocationAction(c, cantonledger.ChoiceAllocationWithdraw, "withdraw")
+}
+
+func (s *Server) handleAllocationAction(c echo.Context, choice, action string) error {
+	var req allocationActionRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	if req.Party == "" || req.ContractID == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "party and contractId are required"})
+	}
+
+	client, err := s.clientForParty(req.Party)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request().Context(), s.cfg.RequestTimeout)
+	defer cancel()
+
+	partyID, err := s.lookupPartyIdentifier(ctx, client, req.Party)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "party not found"})
+	}
+
+	cmdID := newCommandID("allocation-" + action)
+	submitReq := cantonledger.Command{
+		ExerciseCommand: &cantonledger.ExerciseCommand{
+			TemplateID:  cantonledger.TemplateAllocation,
+			Choice:      choice,
+			ContractID:  req.ContractID,
+			ChoiceArgument: map[string]any{
+				"extraArgs": map[string]any{"context": map[string]any{"values": map[string]any{}}, "meta": map[string]any{"values": map[string]any{}}},
+			},
+		},
+	}
+
+	offset, err := client.SubmitCommand(ctx, cmdID, submitReq, []string{partyID})
+	if err != nil {
+		log.Printf("allocation %s error: %v", action, err)
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("%s failed: %v", action, err)})
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"status": action + "d",
+		"offset": offset,
+	})
+}
+
 func (s *Server) handleFactory(c echo.Context) error {
 	client, ok := s.clients["participant1"]
 	if !ok {
@@ -790,12 +1155,12 @@ func (s *Server) handleFactory(c echo.Context) error {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
 	}
 
-	resp, err := client.ActiveContracts(ctx, offset, TemplateSimpleTokenRules)
+	resp, err := client.ActiveContracts(ctx, offset, cantonledger.TemplateSimpleTokenRules)
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query factory"})
 	}
 
-	events := ExtractCreatedEvents(resp, TemplateSimpleTokenRules)
+	events := cantonledger.ExtractCreatedEvents(resp, cantonledger.TemplateSimpleTokenRules)
 	if len(events) == 0 {
 		var adminID string
 		var lastErr error
@@ -841,9 +1206,9 @@ func (s *Server) handleFactory(c echo.Context) error {
 		}
 
 		cmdID := newCommandID("create-factory")
-		submitReq := Command{
-			CreateCommand: &CreateCommand{
-				TemplateID:      TemplateSimpleTokenRules,
+		submitReq := cantonledger.Command{
+			CreateCommand: &cantonledger.CreateCommand{
+				TemplateID:      cantonledger.TemplateSimpleTokenRules,
 				CreateArguments: createArgs,
 			},
 		}
