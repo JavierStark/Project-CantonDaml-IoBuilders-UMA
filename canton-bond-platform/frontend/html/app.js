@@ -69,7 +69,14 @@ async function loadPageData(page) {
         case 'dashboard': loadDashboard(); break;
         case 'holdings': loadHoldings(); break;
         case 'pending': loadPending(); break;
-        case 'allocations': loadAllocations(); break;
+        case 'allocations':
+            if (!parties.length) {
+                await loadParties();
+            } else {
+                populatePartySelects();
+            }
+            await loadAllocations();
+            break;
         case 'burn': loadBurnHoldings(); break;
         case 'mint': populatePartySelects(); break;
         case 'transfer': populatePartySelects(); break;
@@ -307,21 +314,41 @@ function renderAllocationsTable(data) {
         el.innerHTML = '<p>No allocations found.</p>';
         return;
     }
+
     let html = `<table><thead><tr>
-        <th>Sender</th><th>Receiver</th><th>Executor</th><th>Amount</th><th>Instrument</th><th>Allocate Before</th><th>Settle Before</th><th>Contract ID</th>
+    <th>Sender</th>
+    <th>Receiver</th>
+    <th>Executor</th>
+    <th>Amount</th>
+    <th>Instrument</th>
+    <th>Allocate Before</th>
+    <th>Settle Before</th>
+    <th>Contract ID</th>
+    <th>Actions</th>
     </tr></thead><tbody>`;
+
     for (const a of data) {
+        const sender = shortName(a.sender);
+        const receiver = shortName(a.receiver);
+        const executor = shortName(a.executor);
+
         html += `<tr>
-            <td>${shortName(a.sender)}</td>
-            <td>${shortName(a.receiver)}</td>
-            <td>${shortName(a.executor)}</td>
-            <td>${a.amount}</td>
-            <td>${a.instrumentId || '-'}</td>
-            <td>${a.allocateBefore || '-'}</td>
-            <td>${a.settleBefore || '-'}</td>
-            <td style="font-size:0.75rem;max-width:200px;overflow:hidden;text-overflow:ellipsis">${a.contractId}</td>
+        <td>${sender}</td>
+        <td>${receiver}</td>
+        <td>${executor}</td>
+        <td>${a.amount}</td>
+        <td>${a.instrumentId || '-'}</td>
+        <td>${a.allocateBefore || '-'}</td>
+        <td>${a.settleBefore || '-'}</td>
+        <td style="font-size:0.75rem;max-width:200px;overflow:hidden;text-overflow:ellipsis">${a.contractId}</td>
+        <td>
+        <button class="btn-small btn-success" onclick="executeAllocation('${a.contractId}', '${executor}')">Execute</button>
+        <button class="btn-small btn-danger" onclick="cancelAllocation('${a.contractId}', '${executor}')">Cancel</button>
+        <button class="btn-small" onclick="withdrawAllocation('${a.contractId}', '${sender}')">Withdraw</button>
+        </td>
         </tr>`;
     }
+
     html += '</tbody></table>';
     el.innerHTML = html;
 }
@@ -364,7 +391,19 @@ function uniqueParties(list) {
 }
 
 function populatePartySelects() {
-    const selects = ['mintAdmin', 'mintOwner', 'transferSender', 'transferReceiver', 'burnParty', 'holdingsFilter', 'pendingFilter', 'allocationsFilter'];
+    const selects = [
+        'mintAdmin',
+        'mintOwner',
+        'transferSender',
+        'transferReceiver',
+        'burnParty',
+        'holdingsFilter',
+        'pendingFilter',
+        'allocationSender',
+        'allocationReceiver',
+        'allocationExecutor',
+        'allocationsFilter'
+    ];
     const unique = uniqueParties(parties);
     for (const id of selects) {
         const sel = $(id);
