@@ -138,4 +138,16 @@ frontend.PublishAsStaticWebsite(
     .WithExternalHttpEndpoints()
     .WaitFor(backend);
 
+// ---- Listener (Go background poller) ----
+
+var listener = builder.AddGoApp("listener", "./listener")
+    .WithEnvironment("LISTENER_PARTICIPANT_URL", "http://localhost:5013")
+    .WithEnvironment("LISTENER_USER_ID", "ledger-api-user")
+    .WithEnvironment("LISTENER_POLL_INTERVAL", "2s")
+    .WithEnvironment("LISTENER_REQUEST_TIMEOUT", "30s")
+    .WithEnvironment("LISTENER_EMIT_INITIAL", "false");
+
+foreach (var p in participants)
+    listener = listener.WaitFor(p);
+
 builder.Build().Run();
