@@ -398,6 +398,35 @@ function fillBurn(cid) {
     $('burnContractId').scrollIntoView({ behavior: 'smooth' });
 }
 
+// ---- Event Delegation (for dynamic buttons in ES module mode) ----
+document.addEventListener('click', e => {
+    const btn = e.target.closest('[data-action]');
+    if (!btn) return;
+    const action = btn.dataset.action;
+    const cid = btn.dataset.cid;
+    const party = btn.dataset.party;
+    switch (action) {
+        case 'fill-burn':
+            fillBurn(cid);
+            break;
+        case 'accept-transfer':
+            if (confirm('Accept this transfer?')) {
+                acceptTransfer(cid, party);
+            }
+            break;
+        case 'reject-transfer':
+            if (confirm('Reject this transfer?')) {
+                rejectTransfer(cid, party);
+            }
+            break;
+        case 'withdraw-transfer':
+            if (confirm('Withdraw this transfer?')) {
+                withdrawTransfer(cid, party);
+            }
+            break;
+    }
+});
+
 // ---- Event Handlers ----
 
 $('mintForm').addEventListener('submit', async e => {
