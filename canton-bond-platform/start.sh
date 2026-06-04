@@ -116,24 +116,41 @@ if [ $retries -ge $MAX_API_RETRIES ]; then
     exit 1
 fi
 
+log_info "Waiting for participant1 Ledger API (Port 5011)..."
+until docker exec bond-backend nc -zv participant1 5011 >/dev/null 2>&1 || curl -s http://localhost:5013/v1/health >/dev/null 2>&1; do
+    sleep 2
+done
+log_ok "Participant1 Ledger API is responding"
+
 # ---------------------------------------------------------------
 # 6. Initialize factory with retry
 # ---------------------------------------------------------------
 log_info "Initializing factory contract..."
-MAX_FACTORY_RETRIES=15
+MAX_FACTORY_RETRIES=30
+RETRY_FACTORY_INTERVAL=4
 retries=0
+
 while [ $retries -lt $MAX_FACTORY_RETRIES ]; do
-    response=$(curl -sf -X POST http://localhost:8080/api/v1/factory 2>/dev/null || echo "")
-    if echo "$response" | grep -q '"status"'; then
-        log_ok "Factory initialized: $(echo "$response" | grep -o '"status":"[^"]*"' | head -1)"
+    # Capturamos tanto la respuesta como el código de estado HTTP
+    response=$(curl -s -w "\n%{http_code}" -X POST http://localhost:8080/api/v1/factory || echo -e "\n500")
+    http_status=$(echo "$response" | tail -n1)
+    json_body=$(echo "$response" | sed '$d')
+
+    # Validamos que el HTTP Status sea 2xx y que no contenga la palabra "error"
+    if [ "$http_status" -ge 200 ] && [ "$http_status" -lt 300 ] && ! echo "$json_body" | grep -q '"error"'; then
+        log_ok "Factory initialized successfully (HTTP $http_status)"
         break
     fi
-    sleep 2
+
+    log_warn "  Factory deployment pending or ledger not ready (HTTP $http_status). Retrying in ${RETRY_FACTORY_INTERVAL}s... ($((retries + 1))/$MAX_FACTORY_RETRIES)"
+    sleep $RETRY_FACTORY_INTERVAL
     retries=$((retries + 1))
 done
+
 if [ $retries -ge $MAX_FACTORY_RETRIES ]; then
-    log_error "Failed to initialize factory after 30s"
-    curl -s -X POST http://localhost:8080/api/v1/factory || true
+    log_error "Failed to initialize factory after $((MAX_FACTORY_RETRIES * RETRY_FACTORY_INTERVAL))s"
+    log_info "Last backend output:"
+    docker logs bond-backend --tail 10
     exit 1
 fi
 
