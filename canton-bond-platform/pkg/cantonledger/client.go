@@ -19,10 +19,23 @@ type Client struct {
 
 // New creates a ledger API client.
 func New(baseURL, userID string, timeout time.Duration) *Client {
+
+	transport := &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 100,
+		IdleConnTimeout:     0,
+		DisableCompression:  true,
+	}
+
+	client := &http.Client{
+		Transport: transport,
+		Timeout:   timeout,
+	}
+
 	return &Client{
 		baseURL: baseURL,
 		userID:  userID,
-		http:    &http.Client{Timeout: timeout},
+		http:    client,
 	}
 }
 
@@ -147,4 +160,25 @@ func (c *Client) doRaw(req *http.Request) (map[string]any, error) {
 		return nil, fmt.Errorf("decode response: %w", err)
 	}
 	return out, nil
+}
+
+// PartyFilter crea el filtro exacto que exige Canton v3 para escuchar los contratos de un usuario específico.
+func PartyFilter(party string) map[string]any {
+	return map[string]any{
+		"filtersByParty": map[string]any{
+			party: map[string]any{
+				"cumulative": []map[string]any{
+					{
+						"identifierFilter": map[string]any{
+							"WildcardFilter": map[string]any{
+								"value": map[string]any{
+									"includeCreatedEventBlob": false,
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
 }

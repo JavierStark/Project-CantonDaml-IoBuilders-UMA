@@ -66,6 +66,8 @@ services:
       - ADDITIONAL_CONFIG_03=canton.participants.participant.http-ledger-api.port = 5013
       - ADDITIONAL_CONFIG_04=canton.participants.participant.ledger-api.auth-services = []
       - ADDITIONAL_CONFIG_05=canton.participants.participant.storage.type = memory
+      - ADDITIONAL_CONFIG_06=canton.participants.participant.http-ledger-api.address = 0.0.0.0
+      
     depends_on:
       synchronizer:
         condition: service_started
@@ -88,6 +90,7 @@ services:
       - ADDITIONAL_CONFIG_03=canton.participants.participant.http-ledger-api.port = 5023
       - ADDITIONAL_CONFIG_04=canton.participants.participant.ledger-api.auth-services = []
       - ADDITIONAL_CONFIG_05=canton.participants.participant.storage.type = memory
+      - ADDITIONAL_CONFIG_06=canton.participants.participant.http-ledger-api.address = 0.0.0.0
     depends_on:
       synchronizer:
         condition: service_started
@@ -110,6 +113,7 @@ services:
       - ADDITIONAL_CONFIG_03=canton.participants.participant.http-ledger-api.port = 5033
       - ADDITIONAL_CONFIG_04=canton.participants.participant.ledger-api.auth-services = []
       - ADDITIONAL_CONFIG_05=canton.participants.participant.storage.type = memory
+      - ADDITIONAL_CONFIG_06=canton.participants.participant.http-ledger-api.address = 0.0.0.0
     depends_on:
       synchronizer:
         condition: service_started
@@ -157,11 +161,11 @@ services:
       context: .
       dockerfile: listener/Dockerfile
     container_name: bond-listener
+    ports:
+      - "8081:8081" 
     environment:
-      - LISTENER_PARTICIPANT_URL=http://participant1:5013
-      - LISTENER_USER_ID=ledger-api-user
-      - LISTENER_POLL_INTERVAL=2s
-      - LISTENER_REQUEST_TIMEOUT=30s
+      - LISTENER_PARTICIPANT_URL=participant1:5011
+      - LISTENER_PARTY=admin::1220facfed7949b3889774f7eb7ff69585baae2dae4de5367033876d8574d05a909a
       - LISTENER_EMIT_INITIAL=false
     depends_on:
       participant1:
