@@ -1,95 +1,294 @@
-# Documentación de la Migración del Listener a gRPC Nativo
+# Migracion progresiva a gRPC
 
-Este componente funciona como una pasarela intermedia de datos dentro de nuestra plataforma de bonos. Su propósito fundamental es capturar los eventos y cambios de estado generados en el libro de registro de la blockchain (Canton) y retransmitirlos de forma inmediata hacia la interfaz de usuario (Frontend) utilizando conexiones WebSocket bidireccionales en tiempo real.
+Este documento describe el estado actual de la migracion del proyecto a la
+Canton Ledger API gRPC. La API REST publica del backend no cambia: el frontend
+continua llamando a los mismos endpoints HTTP bajo `/api/v1`.
 
----
+## Estado actual
 
-## 1. Cambios Realizados y su Explicación Arquitectónica
+### Backend REST
 
-Para comprender la reestructuración del componente, a continuación se detallan los cambios aplicados en la arquitectura explicados desde la perspectiva del flujo de datos:
-
-### Transición de Consultas Web (HTTP) a Conexión gRPC Directa
-* **Cómo funcionaba antes:** El Listener intentaba interactuar con la blockchain simulando peticiones web tradicionales (HTTP/REST). Esto requería que el servicio solicitara información de manera intermitente, actuando como un cliente externo común que dependía de traductores intermedios de protocolo.
-* **Cómo funciona ahora:** Se ha eliminado la capa web intermedia. El Listener ahora abre un canal de comunicación directo utilizando **gRPC nativo**. Esto significa que el servicio se comunica utilizando el lenguaje e infraestructura internos de la propia red de Canton, conectándose directamente al puerto de datos del nodo participante sin necesidad de intermediarios.
-
-### Sustitución del Mecanismo de Polling por Streaming Asíncrono
-* **El problema del Polling:** Bajo el esquema anterior, para simular el tiempo real, el sistema debía preguntar repetidamente a la blockchain en intervalos cortos de tiempo si se había producido una nueva transacción (por ejemplo, la acuñación de un bono o *mint*). Esta técnica generaba una sobrecarga constante de la red, un alto consumo de CPU y latencias elevadas.
-* **La solución con Streaming:** gRPC se ejecuta sobre HTTP/2, un protocolo que permite mantener conexiones persistentes abiertas en ambos sentidos. Con la migración, el Listener realiza una única solicitud de suscripción al arrancar. El canal se queda abierto en un estado pasivo y es el propio nodo participante de Canton el que empuja el bloque binario de la transacción en el milisegundo exacto en que se valida en el registro, reduciendo la latencia a cero y optimizando el ancho de banda.
-
-### Implementación del Filtro Comodín Obligatorio (`WildcardFilter`)
-* **Comportamiento nativo de Canton v3:** En las versiones modernas de la API de Ledger de Daml, cuando un cliente abre un flujo de datos indicando simplemente a qué entidad (*Party*) representa, el nodo por defecto no envía ninguna información por razones de optimización. La conexión se establece con éxito, pero el canal permanece vacío.
-* **La corrección técnica:** Se modificó la estructura interna de la petición gRPC para inyectar explitamente un filtro acumulativo de tipo comodín (*Wildcard*). Esta instrucción técnica le comunica explícitamente al nodo que el Listener requiere la transmisión activa de todos los contratos y eventos de creación o archivado asociados a los derechos de lectura de esa entidad.
-
-### Control de Tolerancia a Fallos en el Arranque Cooperativo
-* **El conflicto de tiempos en Docker:** Al iniciar el entorno con Docker Compose, todos los servicios (nodos de Canton, bases de datos, Backend y Listener) reciben la orden de encendido simultáneamente. El Listener en Go se compila e inicia en milisegundos, mientras que los participantes de la blockchain tardan habitualmente entre uno y dos minutos en verificar su criptografía e inicializar sus servicios internos. Esto provocaba que el Listener encontrara el puerto cerrado, generara un error crítico de conexión rechazada y se apagara de forma definitiva.
-* **La solución de resiliencia:** Se envolvió el proceso de conexión gRPC dentro de una estructura lógica iterativa infinita controlada por temporizadores. Si el puerto gRPC está cerrado, el componente intercepta el error, detiene la ejecución de forma segura durante 5 segundos y vuelve a intentar la conexión de manera indefinida, garantizando que el sistema se enlace automáticamente en cuanto la blockchain esté operativa.
-
----
-
-## 2. Errores de Compatibilidad Encontrados (Canton, Daml y gRPC)
-
-Durante el proceso de desarrollo y migración nos topamos con barreras críticas de compatibilidad debido a la evolución de las herramientas de Daml y Canton (especialmente al pasar a Canton v3 y su API de Ledger v2). A continuación se detallan estos fallos para comprender el porqué de la estructura actual del código:
-
-### El error del "Stream Silencioso" (Filtros por Party Vacíos)
-* **El problema:** Al mapear la Party en el código inicial, el campo `Cumulative` se enviaba como una lista vacía (`[]*pb.CumulativeFilter{}`). En versiones antiguas de Daml esto bastaba para escuchar todo, pero en Canton moderno esto rompe la compatibilidad. El servidor acepta la conexión (devuelve un código HTTP 200 / gRPC OK) pero entra en un estado silencioso donde **Canton decide enviar 0 eventos**.
-* **La causa:** Canton v3 exige que si te suscribes a nivel de Ledger, debes especificar contractualmente qué quieres ver. Si dejas la lista vacía, el nodo asume explícitamente que tu filtro es "ningún contrato".
-* **La solución:** Se tuvo que estructurar el filtro inyectando un objeto nativo `CumulativeFilter_WildcardFilter` con la propiedad `IncludeCreatedEventBlob: true` para romper esa restricción y forzar al nodo a transmitir la actividad.
-
-### El conflicto de tipado con JSON nativo
-* **El problema:** Originalmente, el sistema intentaba capturar la información directamente en texto JSON plano enviado por pasarelas HTTP previas. Al migrar a gRPC nativo, los datos que viajan por la red ya no son texto legible ni estructurado en JSON; viajan en formato **binario serializado** (Protocol Buffers).
-* **La causa:** Daml maneja tipos de datos fuertemente tipados y personalizados dentro de la blockchain (como contratos que contienen estructuras complejas e identificadores largos). Intentar transformar directamente los datos nativos de gRPC a un JSON genérico en Go causaba fallos de tipado o la pérdida de campos cruciales como el cuerpo del bono (*CreatedEvent*).
-* **La solución:** Se reescribió la lógica del Listener en `main.go` y `cantonledger` para actuar como un traductor manual. Ahora el Listener intercepta los punteros binarios estructurados de gRPC (`*pb.GetUpdatesResponse_Transaction`), extrae los strings esenciales (como `ContractId` y `TemplateId.EntityName`) y construye a mano un mapa compatible (`map[string]any`) que es el que finalmente se serializa en un JSON limpio y amigable para que el Frontend lo pueda entender sin esfuerzo.
-
----
-
-## 3. Ficha Técnica y Especificaciones de Ingeniería
-
-A continuación se presenta el desglose técnico y los parámetros exactos utilizados para la configuración del entorno y el comportamiento del código en Go:
-
-### Protocolo y Red
-* **Capa de Transporte:** gRPC nativo implementado sobre HTTP/2 con serialización binaria basada en Protocol Buffers (v2).
-* **Puerto Destino:** Puerto `5011` del contenedor `participant1` (Puerto asignado para la API de Ledger externa de Canton).
-* **Mecanismo de Seguridad:** Credenciales inseguras explícitas (`insecure.NewCredentials()`) para comunicaciones dentro de la red interna aislada de Docker.
-
-### Configuración del Objeto de Suscripción (`GetUpdatesRequest`)
-* **Punto de Inicio (`BeginExclusive`):** Configurado en `0` (origen del Ledger) para asegurar el procesamiento ordenado de eventos.
-* **Estructura del Filtro (`FiltersByParty`):** Mapeo clave-valor indexado por el string dinámico de la variable `LISTENER_PARTY`.
-* **Filtro de Datos:** `CumulativeFilter` que contiene una instancia de `WildcardFilter` con la propiedad técnica `IncludeCreatedEventBlob: true`. Este parámetro es estrictamente necesario para deserializar contratos complejos bajo las especificaciones de Canton v3.
-* **Formato de Salida (`TransactionShape`):** Definido bajo la constante enum `TRANSACTION_SHAPE_LEDGER_EFFECTS`, lo que instruye al nodo a empaquetar de forma explícita las consecuencias transaccionales (altas y bajas de contratos) en lugar del árbol de ejecución completo de la transacción.
-
-### Arquitectura de Software en Go
-* **Concurrencia Asíncrona:** El software hace uso de Goroutines independientes. El flujo gRPC opera en su propio hilo ligero bloqueante (`stream.Recv()`), mientras que el servidor de WebSockets se ejecuta en paralelo bajo el motor HTTP nativo de Go en el puerto `8081`.
-* **Sincronización de Memoria (Thread-Safety):** Dado que múltiples usuarios del Frontend pueden conectar sus navegadores al WebSocket al mismo tiempo, el mapa global de clientes (`wsClients`) constituye un recurso compartido propenso a condiciones de carrera (*race conditions*). Para evitar corrupción de memoria al propagar masivamente un evento de *mint*, se utiliza un mecanismo de exclusión mutua (`sync.Mutex`) que bloquea y libera de forma segura la estructura durante la iteración de envío de datos.
-
----
-
-## 4. Comandos de Terminal para Ejecución, Despliegue y Pruebas
-
-Para validar el correcto funcionamiento del componente migrado y verificar el flujo en tiempo real, ejecute los siguientes comandos estrictamente en el orden indicado:
-
-### Paso 1: Posicionarse en el directorio raíz del proyecto
-Abra su terminal y asegúrese de estar situado en la raíz de la plataforma de bonos donde reside el archivo de configuración de Docker:
-```bash
-cd ~/blosein/Project-CantonDaml-IoBuilders-UMA/canton-bond-platform
-```
-
-### Paso 2: Limpieza absoluta del entorno previo
-Este comando detiene todos los servicios concurrentes y elimina los contenedores, redes y elementos huérfanos generados por ejecuciones anteriores para asegurar un despliegue libre de datos corruptos en memoria:
-```bash
-docker compose down --remove-orphans
-
-```
-
-### Paso 3: Compilación del código y lanzamiento de la plataforma
-Este comando fuerza a Docker a leer los archivos de Go modificados dentro de las carpetas locales, compila el ejecutable del nuevo Listener binario dentro de su respectiva imagen alpina y levanta todos los componentes de la arquitectura de forma unificada:
+El backend REST usa ahora gRPC por defecto para comunicarse con los
+participantes Canton. El transporte se selecciona con:
 
 ```bash
-docker compose up --build
+LEDGER_TRANSPORT=grpc   # default
+LEDGER_TRANSPORT=http   # fallback legacy
 ```
 
-### Paso 4: Monitorización y auditoría del canal gRPC (En otra terminal)
-Para observar el comportamiento interno del Listener y verificar si se ha enganchado correctamente a la blockchain, abra una pestaña o ventana secundaria de su terminal, acceda al mismo directorio del proyecto y ejecute el visor de logs en tiempo real filtrado por este componente:
+Cuando `LEDGER_TRANSPORT=grpc`, el backend usa estos servicios de Ledger API:
+
+| Operacion interna | Servicio gRPC |
+|---|---|
+| Ledger end | `com.daml.ledger.api.v2.StateService.GetLedgerEnd` |
+| Active contracts / holdings / factory / pending | `com.daml.ledger.api.v2.StateService.GetActiveContracts` |
+| Submit-and-wait para create/exercise | `com.daml.ledger.api.v2.CommandService.SubmitAndWait` |
+| Listar parties | `com.daml.ledger.api.v2.admin.PartyManagementService.ListKnownParties` |
+| Crear parties | `com.daml.ledger.api.v2.admin.PartyManagementService.AllocateParty` |
+
+La implementacion HTTP JSON API v2 sigue presente como fallback y usa las rutas
+legacy:
+
+- `/v2/state/ledger-end`
+- `/v2/state/active-contracts`
+- `/v2/parties`
+- `/v2/commands/submit-and-wait`
+
+### Listener
+
+El listener ya usaba gRPC y se mantiene asi. Se conecta a
+`UpdateService.GetUpdates` y reenvia eventos al frontend mediante WebSocket en
+`/ws/bonds`.
+
+El listener mantiene:
+
+```go
+IncludeCreatedEventBlob: false
+```
+
+Esto es intencionado. El listener actual solo necesita:
+
+- accion del evento (`created` o `archived`),
+- `contractId`,
+- `templateId`.
+
+No necesita el blob binario del `CreatedEvent`, porque no reenvia contratos
+divulgados ni usa el payload opaco para futuras submissions. Activar el blob
+solo aumentaria el tamano de los mensajes.
+
+## Endpoints REST publicos
+
+Estos endpoints se mantienen estables para el frontend:
+
+- `GET /api/v1/health`
+- `GET /api/v1/parties`
+- `POST /api/v1/parties`
+- `GET /api/v1/factory`
+- `POST /api/v1/factory`
+- `POST /api/v1/mint`
+- `GET /api/v1/holdings?party=alice`
+- `POST /api/v1/transfer`
+- `POST /api/v1/transfer/accept`
+- `POST /api/v1/transfer/reject`
+- `POST /api/v1/transfer/withdraw`
+- `POST /api/v1/burn`
+- `POST /api/v1/self-transfer`
+- `GET /api/v1/transfer-instructions?party=alice`
+- endpoints de `allocations`
+
+## Configuracion Docker
+
+El backend recibe URLs HTTP y gRPC por participante. gRPC es el transporte por
+defecto; HTTP queda disponible para fallback.
+
+```yaml
+backend:
+  environment:
+    - LEDGER_TRANSPORT=grpc
+    - PARTICIPANT1_URL=http://participant1:5013
+    - PARTICIPANT1_GRPC_URL=participant1:5011
+    - PARTICIPANT2_URL=http://participant2:5023
+    - PARTICIPANT2_GRPC_URL=participant2:5021
+    - PARTICIPANT3_URL=http://participant3:5033
+    - PARTICIPANT3_GRPC_URL=participant3:5031
+```
+
+Al arrancar, el backend imprime el transporte activo:
+
+```text
+ledger transport: grpc
+participant participant1 -> participant1:5011 (grpc), fallback http http://participant1:5013
+```
+
+Para volver temporalmente al modo HTTP:
+
+```bash
+LEDGER_TRANSPORT=http docker compose up -d --build backend
+```
+
+## Verificacion
+
+### Build y tests Go
+
+Desde `canton-bond-platform`:
+
+```bash
+cd pkg/cantonledger && go test ./...
+cd ../../backend && go test ./...
+cd ../listener && go test ./...
+```
+
+Si el entorno tiene restricciones de cache:
+
+```bash
+GOCACHE=/tmp/go-build GOMODCACHE=/tmp/go-mod go test ./...
+```
+
+### Arranque Docker
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+Antes de probar endpoints, esperar a que los tres participantes terminen el
+bootstrap y aparezcan como `healthy`:
+
+```text
+participant1   Up ... (healthy)
+participant2   Up ... (healthy)
+participant3   Up ... (healthy)
+```
+
+No es suficiente con que el backend responda `/health`: el backend puede
+arrancar antes de que Canton haya abierto la Ledger API gRPC o antes de que el
+script de bootstrap haya creado las parties. Si se prueba demasiado pronto,
+pueden aparecer respuestas como `[]` en `/api/v1/parties` o
+`failed to query ledger end` en `/api/v1/factory`.
+
+Comprobar en logs del backend:
+
+```bash
+docker compose logs backend
+```
+
+```text
+ledger transport: grpc
+participant participant1 -> participant1:5011 (grpc), fallback http http://participant1:5013
+participant participant2 -> participant2:5021 (grpc), fallback http http://participant2:5023
+participant participant3 -> participant3:5031 (grpc), fallback http http://participant3:5033
+```
+
+Comprobar en logs del listener:
+
+```bash
+docker compose logs listener
+```
+
+```text
+¡ÉXITO! ID resuelto: admin -> admin::...
+Bond Listener Iniciado con gRPC
+Stream gRPC abierto. Esperando eventos para enviar a los WebSockets...
+```
+
+Mientras aparezca `Canton aún no ha generado la party 'admin'`, esperar y
+reintentar. En un arranque limpio con storage en memoria puede tardar 1-2
+minutos.
+
+### Pruebas REST basicas
+
+```bash
+curl -s http://localhost:8080/api/v1/health
+curl -s http://localhost:8080/api/v1/parties
+curl -s -X POST http://localhost:8080/api/v1/factory
+```
+
+Mint:
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/mint \
+  -H "Content-Type: application/json" \
+  -d '{
+    "admin": "admin",
+    "owner": "alice",
+    "amount": 1000,
+    "couponRate": 5,
+    "maturityDate": "2028-12-31",
+    "description": "Corporate Bond A"
+  }'
+```
+
+Holdings:
+
+```bash
+curl -s "http://localhost:8080/api/v1/holdings?party=alice"
+```
+
+Transfer:
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/transfer \
+  -H "Content-Type: application/json" \
+  -d '{
+    "sender": "alice",
+    "receiver": "bob",
+    "amount": 100
+  }'
+```
+
+Accept transfer:
+
+```bash
+curl -s "http://localhost:8080/api/v1/transfer-instructions?party=bob"
+
+curl -s -X POST http://localhost:8080/api/v1/transfer/accept \
+  -H "Content-Type: application/json" \
+  -d '{
+    "party": "bob",
+    "contractId": "<transfer-instruction-cid>"
+  }'
+```
+
+Burn:
+
+```bash
+curl -s -X POST http://localhost:8080/api/v1/burn \
+  -H "Content-Type: application/json" \
+  -d '{
+    "party": "alice",
+    "contractId": "<holding-cid>"
+  }'
+```
+
+### Verificacion del listener
+
+Mientras se ejecutan `mint`, `transfer` o `burn`:
 
 ```bash
 docker compose logs -f listener
 ```
+
+El listener debe imprimir eventos de creacion y archivado recibidos por gRPC.
+
+### Fallback HTTP
+
+Para comprobar que el backend sigue pudiendo usar la HTTP JSON API v2:
+
+```bash
+LEDGER_TRANSPORT=http docker compose up -d --build backend
+docker compose logs backend
+```
+
+El log debe mostrar:
+
+```text
+ledger transport: http
+```
+
+Y las comprobaciones basicas deben seguir funcionando:
+
+```bash
+curl -s http://localhost:8080/api/v1/health
+curl -s http://localhost:8080/api/v1/parties
+```
+
+Para volver a gRPC, arrancar de nuevo con el valor del `docker-compose.yml`:
+
+```bash
+docker compose up -d --build backend
+```
+
+## Limitaciones conocidas
+
+- La migracion evita un refactor amplio del dominio. Los handlers REST siguen
+  construyendo payloads Daml como mapas y el cliente gRPC los convierte a
+  protobuf con un encoder limitado a los payloads reales del proyecto.
+- El encoder gRPC no es un serializador universal de Daml. Cubre factory,
+  mint, transfer, accept/reject/withdraw, burn y las estructuras usadas por
+  allocations en este proyecto.
+- Si un payload nuevo introduce variantes, enums o mapas complejos no cubiertos,
+  debe extenderse el encoder o ejecutarse con `LEDGER_TRANSPORT=http` hasta
+  migrarlo.
+- La implementacion gRPC usa credenciales inseguras (`insecure.NewCredentials`)
+  porque la red es local/Docker. Para un entorno productivo habria que configurar
+  TLS/autenticacion.

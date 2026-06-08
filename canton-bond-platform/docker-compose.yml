@@ -128,13 +128,17 @@ services:
     environment:
       - HTTP_HOST=0.0.0.0
       - HTTP_PORT=8080
+      - LEDGER_TRANSPORT=grpc
       - CANTON_USER_ID=ledger-api-user
       - REQUEST_TIMEOUT=30s
       - PARTICIPANT1_URL=http://participant1:5013
+      - PARTICIPANT1_GRPC_URL=participant1:5011
       - PARTICIPANT1_PARTIES=admin,alice,executor
       - PARTICIPANT2_URL=http://participant2:5023
+      - PARTICIPANT2_GRPC_URL=participant2:5021
       - PARTICIPANT2_PARTIES=bob
       - PARTICIPANT3_URL=http://participant3:5033
+      - PARTICIPANT3_GRPC_URL=participant3:5031
       - PARTICIPANT3_PARTIES=charlie
     depends_on:
       participant1:
