@@ -165,7 +165,8 @@ services:
       - "8081:8081" 
     environment:
       - LISTENER_PARTICIPANT_URL=participant1:5011
-      - LISTENER_PARTY=admin::1220facfed7949b3889774f7eb7ff69585baae2dae4de5367033876d8574d05a909a
+      - LISTENER_HTTP_URL=http://participant1:5013
+      - LISTENER_PARTY=admin
       - LISTENER_EMIT_INITIAL=false
     depends_on:
       participant1:

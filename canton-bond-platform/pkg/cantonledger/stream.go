@@ -25,7 +25,6 @@ func IniciarStreamGRPC(participantURL string, party string, onEvent func(payload
 	client := pb.NewUpdateServiceClient(conn)
 
 	// Petición actualizada con el WildcardFilter obligatorio para Canton v3 / Daml 2.x
-	// Estructura plana y correcta para Canton v3 (API v2)
 	req := &pb.GetUpdatesRequest{
 		BeginExclusive: 0,
 		UpdateFormat: &pb.UpdateFormat{
@@ -33,9 +32,17 @@ func IniciarStreamGRPC(participantURL string, party string, onEvent func(payload
 				EventFormat: &pb.EventFormat{
 					FiltersByParty: map[string]*pb.Filters{
 						party: {
-							// Esta estructura es la más compatible con Canton 3.x
-							// Si la party es válida, Canton enviará los eventos automáticamente.
-							Cumulative: []*pb.CumulativeFilter{},
+							Cumulative: []*pb.CumulativeFilter{
+								{
+									// El campo de la interfaz se llama IdentifierFilter,
+									// pero el tipo en Go es CumulativeFilter_WildcardFilter
+									IdentifierFilter: &pb.CumulativeFilter_WildcardFilter{
+										WildcardFilter: &pb.WildcardFilter{
+											IncludeCreatedEventBlob: false,
+										},
+									},
+								},
+							},
 						},
 					},
 				},
@@ -54,30 +61,67 @@ func IniciarStreamGRPC(participantURL string, party string, onEvent func(payload
 	for {
 		update, err := stream.Recv()
 		if err == io.EOF {
-			log.Println("El nodo cerró el stream.")
+			log.Println("El nodo participante cerró el stream.")
 			break
 		}
 		if err != nil {
-			return fmt.Errorf("error en el stream gRPC: %v", err)
+			return fmt.Errorf("error leyendo datos del stream gRPC: %v", err)
 		}
 
+		// Filtramos silenciosamente solo lo que nos interesa (Transacciones reales)
 		switch u := update.Update.(type) {
 		case *pb.GetUpdatesResponse_Transaction:
 			for _, event := range u.Transaction.Events {
+
+				// 🟢 CASO 1: SE HA CREADO UN CONTRATO NUEVO (Mint, Pendientes, etc.)
 				if created := event.GetCreated(); created != nil {
-					// Extraemos los datos gRPC y creamos un payload simple para el frontend
+					templateName := created.TemplateId.EntityName
+					contractId := created.ContractId
+
+					// Logueamos de forma elegante en el Backend (Terminal)
+					switch templateName {
+					case "SimpleHolding":
+						log.Printf("💰 [MINT / HOLDING CREADO] Nuevo bono en la red. ContractID: %s...", contractId[:15])
+					case "TransferInstruction": // Ajusta este nombre si tu Daml lo llama distinto
+						log.Printf("⏳ [TRANSFER PENDIENTE] Nueva transferencia iniciada. ContractID: %s...", contractId[:15])
+					case "AllocationInstruction":
+						log.Printf("⚙️ [ALLOCATION CREADA] Nueva asignación registrada. ContractID: %s...", contractId[:15])
+					case "SimpleTokenRules":
+						log.Printf("🏭 [FACTORY] Reglas del Token (Factory) creadas/actualizadas.")
+					default:
+						log.Printf("📄 [CONTRATO CREADO] Template: %s | ContractID: %s...", templateName, contractId[:15])
+					}
+
+					// Enviamos el aviso al Frontend por WebSocket
 					payload := map[string]any{
 						"action":     "created",
-						"contractId": created.ContractId,
-						"templateId": created.TemplateId.EntityName,
+						"contractId": contractId,
+						"templateId": templateName,
 					}
-					onEvent(payload) // ¡Disparamos el evento al main.go!
-				}
-				if archived := event.GetArchived(); archived != nil {
+					onEvent(payload)
+
+					// 🔴 CASO 2: SE HA CONSUMIDO/ARCHIVADO UN CONTRATO (Burn, Transfer aceptado, etc.)
+				} else if archived := event.GetArchived(); archived != nil {
+					templateName := archived.TemplateId.EntityName
+					contractId := archived.ContractId
+
+					// Logueamos de forma elegante en el Backend (Terminal)
+					switch templateName {
+					case "SimpleHolding":
+						log.Printf("🔥 [BURN / CONSUMIDO] Bono quemado o transferido. ContractID: %s...", contractId[:15])
+					case "TransferInstruction":
+						log.Printf("✅ [TRANSFER RESUELTO] Transferencia aceptada, rechazada o retirada.")
+					case "AllocationInstruction":
+						log.Printf("✅ [ALLOCATION RESUELTA] Asignación ejecutada o cancelada.")
+					default:
+						log.Printf("🗑️ [CONTRATO ARCHIVADO] Template: %s | ContractID: %s...", templateName, contractId[:15])
+					}
+
+					// Enviamos el aviso al Frontend por WebSocket
 					payload := map[string]any{
 						"action":     "archived",
-						"contractId": archived.ContractId,
-						"templateId": archived.TemplateId.EntityName,
+						"contractId": contractId,
+						"templateId": templateName,
 					}
 					onEvent(payload)
 				}

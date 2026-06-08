@@ -1,14 +1,15 @@
 package main
 
 import (
-	"encoding/json"
+	"context" // <--- NUEVO
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings" // <--- NUEVO
 	"sync"
 	"syscall"
-	"time" // Añadido para controlar el tiempo de espera entre reintentos
+	"time"
 
 	"canton-bond-platform/pkg/cantonledger"
 
@@ -28,29 +29,60 @@ type Config struct {
 	Party          string
 }
 
+func getEnv(key, fallback string) string {
+	if value, exists := os.LookupEnv(key); exists {
+		return value
+	}
+	return fallback
+}
+
 func LoadConfig() Config {
 	return Config{
-		ParticipantURL: getEnv("LISTENER_PARTICIPANT_URL", "localhost:5011"), // Puerto 5011 para gRPC
-		Party:          getEnv("LISTENER_PARTY", "admin"),
+		ParticipantURL: getEnv("LISTENER_PARTICIPANT_URL", "participant1:5011"),
+		Party:          getEnv("LISTENER_PARTY", "admin"), // Volvemos a usar el nombre corto
+	}
+}
+
+// --- NUEVA FUNCIÓN DE AUTO-DESCUBRIMIENTO ---
+// Utiliza tu client.go y parties.go para buscar el hash real en vivo
+func resolverPartyID(httpURL string, shortName string) string {
+	log.Printf("Buscando el hash criptográfico real para la party: '%s'...", shortName)
+	client := cantonledger.New(httpURL, "", 10*time.Second)
+
+	for {
+		parties, err := client.Parties(context.Background())
+		if err == nil {
+			for _, p := range parties {
+				// Canton siempre guarda las parties con el formato "nombre::hash"
+				if strings.HasPrefix(p.Party, shortName+"::") {
+					return p.Party
+				}
+			}
+		}
+		log.Printf("Canton aún no ha generado la party '%s'. Reintentando en 5 segundos...", shortName)
+		time.Sleep(5 * time.Second)
 	}
 }
 
 func main() {
 	cfg := LoadConfig()
+
+	// 0. AUTO-DESCUBRIMIENTO DEL ID ANTES DE ARRANCAR gRPC
+	httpBaseURL := getEnv("LISTENER_HTTP_URL", "http://participant1:5013")
+	realPartyID := resolverPartyID(httpBaseURL, cfg.Party)
+
+	log.Printf("¡ÉXITO! ID resuelto: %s -> %s", cfg.Party, realPartyID)
+	cfg.Party = realPartyID // Sustituimos "admin" por el hash real ("admin::1220...")
+
 	log.Printf("Bond Listener Iniciado con gRPC (participant=%s)", cfg.ParticipantURL)
 
-	// 1. Arrancamos el Stream gRPC en una Goroutine paralela con lógica de reintento masivo
+	// 1. Arrancamos el Stream gRPC en una Goroutine paralela
 	go func() {
 		for {
 			log.Printf("Conectando vía gRPC nativo a %s...", cfg.ParticipantURL)
 
-			// Ejecutamos el stream pasándole el callback para propagar eventos
 			err := cantonledger.IniciarStreamGRPC(cfg.ParticipantURL, cfg.Party, func(payload map[string]any) {
-				// Lo imprimimos bonito en la consola
-				data, _ := json.Marshal(payload)
-				log.Printf("Evento gRPC propagado: %s", data)
-
-				// ¡MAGIA! Lo inyectamos directamente en todos los frontends conectados
+				// Bloqueamos mutex para envío seguro a WS
 				clientsMu.Lock()
 				for conn := range wsClients {
 					if err := conn.WriteJSON(payload); err != nil {
@@ -62,17 +94,15 @@ func main() {
 				clientsMu.Unlock()
 			})
 
-			// Si llega aquí, significa que la conexión ha fallado o se ha cortado
 			if err != nil {
 				log.Printf("[Stream Error]: %v", err)
 			}
-
-			log.Println("Canton podría estar inicializándose o desconectado. Reintentando en 5 segundos...")
-			time.Sleep(5 * time.Second) // Espera antes de volver a intentar el bucle
+			log.Println("Canton desconectado. Reintentando en 5 segundos...")
+			time.Sleep(5 * time.Second)
 		}
 	}()
 
-	// 2. Endpoint HTTP para aceptar conexiones WebSocket entrantes de tu Frontend
+	// 2. Endpoint HTTP para WebSockets
 	http.HandleFunc("/ws/bonds", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
@@ -85,7 +115,7 @@ func main() {
 		log.Println("[WS] ¡Nuevo cliente Frontend conectado!")
 	})
 
-	// 3. Levantamos el servidor de WebSockets
+	// 3. Levantamos el servidor
 	go func() {
 		log.Println("Servidor WebSocket a la escucha en el puerto :8081/ws/bonds")
 		if err := http.ListenAndServe(":8081", nil); err != nil {
@@ -93,16 +123,9 @@ func main() {
 		}
 	}()
 
-	// 4. Esperar señal para apagado limpio
-	stop := make(chan os.Signal, 1)
-	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
-	<-stop
+	// Bloqueo para mantener vivo el programa
+	c := make(chan os.Signal, 1)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	<-c
 	log.Println("Apagando Bond Listener...")
-}
-
-func getEnv(key, fallback string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return fallback
 }
