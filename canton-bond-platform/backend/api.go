@@ -19,15 +19,26 @@ import (
 
 type Server struct {
 	cfg     Config
-	clients map[string]*cantonledger.Client
+	clients map[string]cantonledger.LedgerClient
 }
 
-func NewServer(cfg Config) *Server {
-	clients := make(map[string]*cantonledger.Client)
+func NewServer(cfg Config) (*Server, error) {
+	clients := make(map[string]cantonledger.LedgerClient)
 	for _, p := range cfg.Participants {
-		clients[p.Name] = cantonledger.New(p.URL, cfg.UserID, cfg.RequestTimeout)
+		switch cfg.LedgerTransport {
+		case "grpc":
+			client, err := cantonledger.NewGRPC(p.GRPCURL, cfg.UserID, cfg.RequestTimeout)
+			if err != nil {
+				return nil, fmt.Errorf("create grpc ledger client for %s: %w", p.Name, err)
+			}
+			clients[p.Name] = client
+		case "http":
+			clients[p.Name] = cantonledger.New(p.URL, cfg.UserID, cfg.RequestTimeout)
+		default:
+			return nil, fmt.Errorf("unsupported ledger transport %q", cfg.LedgerTransport)
+		}
 	}
-	return &Server{cfg: cfg, clients: clients}
+	return &Server{cfg: cfg, clients: clients}, nil
 }
 
 func (s *Server) Router() *echo.Echo {
@@ -68,7 +79,7 @@ func (s *Server) Router() *echo.Echo {
 	return e
 }
 
-func (s *Server) clientForParty(party string) (*cantonledger.Client, error) {
+func (s *Server) clientForParty(party string) (cantonledger.LedgerClient, error) {
 	party = strings.TrimSpace(party)
 	p := s.cfg.PartyToParticipant(party)
 	if p == nil {
@@ -108,7 +119,7 @@ func (s *Server) clientForParty(party string) (*cantonledger.Client, error) {
 	return client, nil
 }
 
-func (s *Server) lookupPartyIdentifier(ctx context.Context, client *cantonledger.Client, partyName string) (string, error) {
+func (s *Server) lookupPartyIdentifier(ctx context.Context, client cantonledger.LedgerClient, partyName string) (string, error) {
 	partyName = strings.TrimSpace(partyName)
 	partyShort := strings.SplitN(partyName, "::", 2)[0]
 	parties, err := client.Parties(ctx)
@@ -592,9 +603,9 @@ func (s *Server) handleTransferAction(c echo.Context, choice, action string) err
 	cmdID := newCommandID(action)
 	submitReq := cantonledger.Command{
 		ExerciseCommand: &cantonledger.ExerciseCommand{
-			TemplateID:  cantonledger.TemplateTransferInstruction,
-			Choice:      choice,
-			ContractID:  req.ContractID,
+			TemplateID: cantonledger.TemplateTransferInstruction,
+			Choice:     choice,
+			ContractID: req.ContractID,
 			ChoiceArgument: map[string]any{
 				"extraArgs": map[string]any{"context": map[string]any{"values": map[string]any{}}, "meta": map[string]any{"values": map[string]any{}}},
 			},
@@ -661,8 +672,10 @@ func (s *Server) handleBurn(c echo.Context) error {
 	}
 
 	choice := cantonledger.ChoiceBurn
+	actAs := []string{ownerID}
 	if req.AsAdmin {
 		choice = cantonledger.ChoiceBurnByAdmin
+		actAs = []string{adminID}
 	}
 
 	cmdID := newCommandID("burn")
@@ -675,7 +688,7 @@ func (s *Server) handleBurn(c echo.Context) error {
 		},
 	}
 
-	offset, err = client.SubmitCommand(ctx, cmdID, submitReq, []string{adminID, ownerID})
+	offset, err = client.SubmitCommand(ctx, cmdID, submitReq, actAs)
 	if err != nil {
 		log.Printf("burn error: %v", err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("burn failed: %v", err)})
@@ -1023,9 +1036,9 @@ func (s *Server) handleCreateAllocation(c echo.Context) error {
 
 	allocationArg := map[string]any{
 		"transferLeg": map[string]any{
-			"sender": senderID,
-			"receiver": receiverID,
-			"amount": cantonledger.DamlDecimal(req.Amount),
+			"sender":       senderID,
+			"receiver":     receiverID,
+			"amount":       cantonledger.DamlDecimal(req.Amount),
 			"instrumentId": cantonledger.InstrumentID(factoryAdmin, "BOND"),
 			"meta": map[string]any{
 				"values": map[string]any{},
@@ -1037,9 +1050,9 @@ func (s *Server) handleCreateAllocation(c echo.Context) error {
 				"id":  settlementRef,
 				"cid": nil,
 			},
-			"requestedAt": requestedAt,
+			"requestedAt":    requestedAt,
 			"allocateBefore": req.AllocateBefore,
-			"settleBefore": req.SettleBefore,
+			"settleBefore":   req.SettleBefore,
 			"meta": map[string]any{
 				"values": map[string]any{},
 			},
@@ -1048,11 +1061,11 @@ func (s *Server) handleCreateAllocation(c echo.Context) error {
 	}
 
 	choiceArg := map[string]any{
-		"expectedAdmin": factoryAdmin,
-		"allocation":    allocationArg,
+		"expectedAdmin":    factoryAdmin,
+		"allocation":       allocationArg,
 		"inputHoldingCids": inputCIDs,
-		"requestedAt":   requestedAt,
-		"extraArgs":     map[string]any{"context": map[string]any{"values": map[string]any{}}, "meta": map[string]any{"values": map[string]any{}}},
+		"requestedAt":      requestedAt,
+		"extraArgs":        map[string]any{"context": map[string]any{"values": map[string]any{}}, "meta": map[string]any{"values": map[string]any{}}},
 	}
 
 	cmdID := newCommandID("allocate")
@@ -1123,9 +1136,9 @@ func (s *Server) handleAllocationAction(c echo.Context, choice, action string) e
 	cmdID := newCommandID("allocation-" + action)
 	submitReq := cantonledger.Command{
 		ExerciseCommand: &cantonledger.ExerciseCommand{
-			TemplateID:  cantonledger.TemplateAllocation,
-			Choice:      choice,
-			ContractID:  req.ContractID,
+			TemplateID: cantonledger.TemplateAllocation,
+			Choice:     choice,
+			ContractID: req.ContractID,
 			ChoiceArgument: map[string]any{
 				"extraArgs": map[string]any{"context": map[string]any{"values": map[string]any{}}, "meta": map[string]any{"values": map[string]any{}}},
 			},

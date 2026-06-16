@@ -719,4 +719,60 @@ $('burnParty').addEventListener('change', loadBurnHoldings);
             }
         }
     }
+});
+
+// Init
+// Init
+(async function init() {
+    try {
+        await api('/health');
+        setFactoryLocked(true, 'Factory not started - press Start Factory');
+        $('dashboardHoldings').innerHTML = '<p class="loading">Press Start Factory to initialize the ledger.</p>';
+        
+        // ¡Encendemos los oídos del Frontend!
+        initWebSocket();
+        
+    } catch (err) {
+        updateStatus('error', err.message);
+        setFactoryLocked(true, 'Factory not started - press Start Factory');
+    }
 })();
+
+// ---- Conexión WebSocket en Tiempo Real ----
+function initWebSocket() {
+    const ws = new WebSocket('ws://localhost:8081/ws/bonds');
+
+    ws.onopen = () => {
+        console.log('✅ Conectado al Listener en vivo (WebSocket)');
+    };
+
+    ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        console.log('📬 Evento instantáneo del Ledger:', data);
+
+        // Si el contrato es un SimpleHolding (un bono)
+        if (data.templateId === 'SimpleHolding') {
+            if (data.action === 'created') {
+                console.log('🎉 ¡Bono creado! Actualizando UI al instante...');
+                // Refrescamos la pantalla en la que estemos
+                if (currentPage === 'dashboard') loadDashboard();
+                if (currentPage === 'holdings') loadHoldings();
+            } 
+            else if (data.action === 'archived') {
+                console.log('🔥 Bono consumido. Actualizando UI al instante...');
+                if (currentPage === 'dashboard') loadDashboard();
+                if (currentPage === 'holdings') loadHoldings();
+                if (currentPage === 'burn') loadBurnHoldings();
+            }
+        }
+    };
+
+    ws.onclose = () => {
+        console.log('❌ WebSocket desconectado. Reintentando en 5s...');
+        setTimeout(initWebSocket, 5000);
+    };
+
+    ws.onerror = (err) => {
+        console.error('Error en WebSocket:', err);
+    };
+}

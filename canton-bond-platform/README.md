@@ -55,7 +55,7 @@ cd ..
 docker compose up -d
 ```
 
-Wait ~60 seconds for bootstrap completion, then verify:
+Wait for the Canton participants to finish bootstrap, then verify:
 
 ```bash
 docker ps --format "table {{.Names}}\t{{.Status}}"
@@ -74,6 +74,11 @@ bond-frontend      Up X minutes
 bond-listener      Up X minutes
 ```
 
+Do not call the ledger-backed API endpoints while the participants still show
+`health: starting`. On a clean in-memory startup, Canton may need 1-2 minutes to
+initialize identities, connect the synchronizer, expose the Ledger API gRPC
+ports, and create the parties.
+
 ### 3. Initialize the factory contract
 
 The factory contract (SimpleTokenRules) is auto-created when first needed. Trigger it:
@@ -83,6 +88,55 @@ curl -s http://localhost:8080/api/v1/factory | jq .
 ```
 
 Or open http://localhost:3000 in your browser and click around — the frontend will initialize everything.
+
+### 4. Verify gRPC transport
+
+The public REST API stays the same, but the backend uses the native Canton
+Ledger API gRPC by default.
+
+Check the backend logs:
+
+```bash
+docker compose logs backend
+```
+
+Expected lines:
+
+```text
+ledger transport: grpc
+participant participant1 -> participant1:5011 (grpc), fallback http http://participant1:5013
+participant participant2 -> participant2:5021 (grpc), fallback http http://participant2:5023
+participant participant3 -> participant3:5031 (grpc), fallback http http://participant3:5033
+```
+
+Check that the listener has resolved the `admin` party and opened the gRPC
+stream:
+
+```bash
+docker compose logs listener
+```
+
+Expected lines:
+
+```text
+¡ÉXITO! ID resuelto: admin -> admin::...
+Bond Listener Iniciado con gRPC
+Stream gRPC abierto. Esperando eventos para enviar a los WebSockets...
+```
+
+Then verify the REST endpoints:
+
+```bash
+curl -s http://localhost:8080/api/v1/health
+curl -s http://localhost:8080/api/v1/parties
+curl -s http://localhost:8080/api/v1/factory
+```
+
+If `/api/v1/parties` returns `[]` or `/api/v1/factory` returns
+`failed to query ledger end`, wait until all participants are healthy and the
+listener has resolved `admin`, then retry. See
+[`migracion_gRPC.md`](./migracion_gRPC.md) for the full gRPC verification flow,
+fallback mode, and troubleshooting.
 
 ## Project Structure
 
