@@ -695,43 +695,34 @@ $('burnParty').addEventListener('change', loadBurnHoldings);
 
 // Init - auto-create factory
 (async function init() {
-    setFactoryLocked(true, 'Initializing...');
-    const maxRetries = 10;
-    for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        try {
-            await api('/health');
-            const data = await api('/factory', { method: 'POST' });
-            setFactoryLocked(false, data.status === 'created' ? 'Factory ready' : 'Factory ready');
-            await loadParties();
-            await loadDashboard();
-            if (currentPage !== 'dashboard') {
-                loadPageData(currentPage);
-            }
-            return;
-        } catch (err) {
-            if (attempt < maxRetries) {
-                const delay = Math.min(3000 * attempt, 15000);
-                updateStatus('locked', `Retrying (${attempt}/${maxRetries})...`);
-                await new Promise(r => setTimeout(r, delay));
-            } else {
-                setFactoryLocked(true, 'Initialization failed');
-                updateStatus('error', err.message);
-            }
-        }
-    }
-});
-
-// Init
-// Init
-(async function init() {
     try {
         await api('/health');
-        setFactoryLocked(true, 'Factory not started - press Start Factory');
-        $('dashboardHoldings').innerHTML = '<p class="loading">Press Start Factory to initialize the ledger.</p>';
-        
-        // ¡Encendemos los oídos del Frontend!
         initWebSocket();
-        
+        setFactoryLocked(true, 'Initializing...');
+        $('dashboardHoldings').innerHTML = '<p class="loading">Press Start Factory to initialize the ledger.</p>';
+
+        const maxRetries = 10;
+        for (let attempt = 1; attempt <= maxRetries; attempt++) {
+            try {
+                const data = await api('/factory', { method: 'POST' });
+                setFactoryLocked(false, data.status === 'created' ? 'Factory ready' : 'Factory ready');
+                await loadParties();
+                await loadDashboard();
+                if (currentPage !== 'dashboard') {
+                    loadPageData(currentPage);
+                }
+                return;
+            } catch (err) {
+                if (attempt < maxRetries) {
+                    const delay = Math.min(3000 * attempt, 15000);
+                    updateStatus('locked', `Retrying (${attempt}/${maxRetries})...`);
+                    await new Promise(r => setTimeout(r, delay));
+                } else {
+                    setFactoryLocked(true, 'Initialization failed');
+                    updateStatus('error', err.message);
+                }
+            }
+        }
     } catch (err) {
         updateStatus('error', err.message);
         setFactoryLocked(true, 'Factory not started - press Start Factory');
