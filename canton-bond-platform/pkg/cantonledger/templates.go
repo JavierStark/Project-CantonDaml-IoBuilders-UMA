@@ -30,6 +30,7 @@ const (
 
 // Interface choice names for JSON API ExerciseCommand.
 const (
+	ChoiceAddObserver                 = "AddObserver"
 	ChoiceMint                        = "Mint"
 	ChoiceTransferOwnership           = "TransferOwnership"
 	ChoiceBurn                        = "Burn"

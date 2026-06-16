@@ -27,6 +27,18 @@ template SimpleTokenRules
     signatory admin
     observer observers
 
+    nonconsuming choice AddObserver
+      : ContractId SimpleTokenRules
+      with
+        newObserver : Party
+      controller admin
+      do
+        archive self
+        create SimpleTokenRules with
+          admin
+          supportedInstruments
+          observers = newObserver :: observers
+
     nonconsuming choice Mint
       : ContractId SimpleHolding
       with

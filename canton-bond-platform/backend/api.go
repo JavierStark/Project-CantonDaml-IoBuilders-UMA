@@ -206,6 +206,41 @@ func (s *Server) handleAllocateParty(c echo.Context) error {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("failed to allocate party: %v", err)})
 	}
 
+	// Add the new party as an observer of the factory contract so they can
+	// exercise transfer choices on it (needed for cross-participant transfers).
+	factoryClient, ok := s.clients["participant1"]
+	if ok {
+		factoryCtx, factoryCancel := context.WithTimeout(c.Request().Context(), s.cfg.RequestTimeout)
+		defer factoryCancel()
+
+		factoryOffset, err := factoryClient.LedgerEnd(factoryCtx)
+		if err == nil {
+			factoryResp, err := factoryClient.ActiveContracts(factoryCtx, factoryOffset, cantonledger.TemplateSimpleTokenRules)
+			if err == nil {
+				factoryEvents := cantonledger.ExtractCreatedEvents(factoryResp, cantonledger.TemplateSimpleTokenRules)
+				if len(factoryEvents) > 0 {
+					factoryCID := factoryEvents[0].ContractID
+					cmdID := newCommandID("add-observer")
+					submitReq := cantonledger.Command{
+						ExerciseCommand: &cantonledger.ExerciseCommand{
+							TemplateID:     cantonledger.TemplateSimpleTokenRules,
+							Choice:         cantonledger.ChoiceAddObserver,
+							ContractID:     factoryCID,
+							ChoiceArgument: map[string]any{"newObserver": party.Party},
+						},
+					}
+					adminID, adminErr := s.lookupPartyIdentifier(factoryCtx, factoryClient, "admin")
+					if adminErr == nil {
+						_, subErr := factoryClient.SubmitCommand(factoryCtx, cmdID, submitReq, []string{adminID})
+						if subErr != nil {
+							log.Printf("warning: failed to add party %q as factory observer: %v", party.Party, subErr)
+						}
+					}
+				}
+			}
+		}
+	}
+
 	return c.JSON(http.StatusOK, map[string]any{
 		"identifier":  party.Party,
 		"displayName": party.DisplayName,
