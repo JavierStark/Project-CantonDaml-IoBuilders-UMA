@@ -731,7 +731,8 @@ $('burnParty').addEventListener('change', loadBurnHoldings);
 
 // ---- Conexión WebSocket en Tiempo Real ----
 function initWebSocket() {
-    const ws = new WebSocket('ws://localhost:8081/ws/bonds');
+    const wsHost = window.location.hostname;
+    const ws = new WebSocket(`ws://${wsHost}:8081/ws/bonds`);
 
     ws.onopen = () => {
         console.log('✅ Conectado al Listener en vivo (WebSocket)');
@@ -741,20 +742,23 @@ function initWebSocket() {
         const data = JSON.parse(event.data);
         console.log('📬 Evento instantáneo del Ledger:', data);
 
-        // Si el contrato es un SimpleHolding (un bono)
-        if (data.templateId === 'SimpleHolding') {
-            if (data.action === 'created') {
-                console.log('🎉 ¡Bono creado! Actualizando UI al instante...');
-                // Refrescamos la pantalla en la que estemos
+        const tpl = data.templateId;
+        const action = data.action;
+
+        if (tpl === 'SimpleHolding' || tpl === 'LockedSimpleHolding') {
+            if (action === 'created' || action === 'archived') {
                 if (currentPage === 'dashboard') loadDashboard();
                 if (currentPage === 'holdings') loadHoldings();
-            } 
-            else if (data.action === 'archived') {
-                console.log('🔥 Bono consumido. Actualizando UI al instante...');
-                if (currentPage === 'dashboard') loadDashboard();
-                if (currentPage === 'holdings') loadHoldings();
-                if (currentPage === 'burn') loadBurnHoldings();
+                if (action === 'archived' && currentPage === 'burn') loadBurnHoldings();
             }
+        } else if (tpl === 'SimpleTransferInstruction') {
+            if (currentPage === 'dashboard') loadDashboard();
+            if (currentPage === 'pending') loadPending();
+        } else if (tpl === 'SimpleAllocation') {
+            if (currentPage === 'dashboard') loadDashboard();
+            if (currentPage === 'allocations') loadAllocations();
+        } else if (tpl === 'SimpleTokenRules') {
+            loadDashboard();
         }
     };
 

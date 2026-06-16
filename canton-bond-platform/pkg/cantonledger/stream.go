@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"sync/atomic"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -12,8 +13,7 @@ import (
 	pb "canton-bond-platform/pkg/cantonledger/proto/com/daml/ledger/api/v2"
 )
 
-// IniciarStreamGRPC ahora acepta una función 'onEvent' para inyectar los eventos al main.go
-func IniciarStreamGRPC(participantURL string, party string, onEvent func(payload map[string]any)) error {
+func IniciarStreamGRPC(participantURL string, party string, lastOffset *atomic.Int64, onEvent func(payload map[string]any)) error {
 	log.Printf("Conectando vía gRPC nativo a %s...", participantURL)
 
 	conn, err := grpc.NewClient(participantURL, grpc.WithTransportCredentials(insecure.NewCredentials()))
@@ -24,9 +24,9 @@ func IniciarStreamGRPC(participantURL string, party string, onEvent func(payload
 
 	client := pb.NewUpdateServiceClient(conn)
 
-	// Petición actualizada con el WildcardFilter obligatorio para Canton v3 / Daml 2.x
+	beginOffset := lastOffset.Load()
 	req := &pb.GetUpdatesRequest{
-		BeginExclusive: 0,
+		BeginExclusive: beginOffset,
 		UpdateFormat: &pb.UpdateFormat{
 			IncludeTransactions: &pb.TransactionFormat{
 				EventFormat: &pb.EventFormat{
@@ -34,8 +34,6 @@ func IniciarStreamGRPC(participantURL string, party string, onEvent func(payload
 						party: {
 							Cumulative: []*pb.CumulativeFilter{
 								{
-									// El campo de la interfaz se llama IdentifierFilter,
-									// pero el tipo en Go es CumulativeFilter_WildcardFilter
 									IdentifierFilter: &pb.CumulativeFilter_WildcardFilter{
 										WildcardFilter: &pb.WildcardFilter{
 											IncludeCreatedEventBlob: false,
@@ -56,7 +54,11 @@ func IniciarStreamGRPC(participantURL string, party string, onEvent func(payload
 		return fmt.Errorf("fallo al abrir el stream gRPC: %v", err)
 	}
 
-	log.Println("Stream gRPC abierto. Esperando eventos para enviar a los WebSockets...")
+	if beginOffset == 0 {
+		log.Println("Stream gRPC abierto (desde el inicio). Esperando eventos...")
+	} else {
+		log.Printf("Stream gRPC abierto (reanudado desde offset %d). Esperando eventos...", beginOffset)
+	}
 
 	for {
 		update, err := stream.Recv()
@@ -68,23 +70,25 @@ func IniciarStreamGRPC(participantURL string, party string, onEvent func(payload
 			return fmt.Errorf("error leyendo datos del stream gRPC: %v", err)
 		}
 
-		// Filtramos silenciosamente solo lo que nos interesa (Transacciones reales)
 		switch u := update.Update.(type) {
 		case *pb.GetUpdatesResponse_Transaction:
+			if offset := u.Transaction.GetOffset(); offset > 0 {
+				lastOffset.Store(offset)
+			}
 			for _, event := range u.Transaction.Events {
 
-				// 🟢 CASO 1: SE HA CREADO UN CONTRATO NUEVO (Mint, Pendientes, etc.)
 				if created := event.GetCreated(); created != nil {
 					templateName := created.TemplateId.EntityName
 					contractId := created.ContractId
 
-					// Logueamos de forma elegante en el Backend (Terminal)
 					switch templateName {
 					case "SimpleHolding":
 						log.Printf("💰 [MINT / HOLDING CREADO] Nuevo bono en la red. ContractID: %s...", contractId[:15])
-					case "TransferInstruction": // Ajusta este nombre si tu Daml lo llama distinto
+					case "LockedSimpleHolding":
+						log.Printf("🔒 [LOCKED HOLDING CREADO] Holding bloqueado por transfer/allocation. ContractID: %s...", contractId[:15])
+					case "SimpleTransferInstruction":
 						log.Printf("⏳ [TRANSFER PENDIENTE] Nueva transferencia iniciada. ContractID: %s...", contractId[:15])
-					case "AllocationInstruction":
+					case "SimpleAllocation":
 						log.Printf("⚙️ [ALLOCATION CREADA] Nueva asignación registrada. ContractID: %s...", contractId[:15])
 					case "SimpleTokenRules":
 						log.Printf("🏭 [FACTORY] Reglas del Token (Factory) creadas/actualizadas.")
@@ -92,39 +96,50 @@ func IniciarStreamGRPC(participantURL string, party string, onEvent func(payload
 						log.Printf("📄 [CONTRATO CREADO] Template: %s | ContractID: %s...", templateName, contractId[:15])
 					}
 
-					// Enviamos el aviso al Frontend por WebSocket
-					payload := map[string]any{
+					onEvent(map[string]any{
 						"action":     "created",
 						"contractId": contractId,
 						"templateId": templateName,
-					}
-					onEvent(payload)
+					})
 
-					// 🔴 CASO 2: SE HA CONSUMIDO/ARCHIVADO UN CONTRATO (Burn, Transfer aceptado, etc.)
 				} else if archived := event.GetArchived(); archived != nil {
 					templateName := archived.TemplateId.EntityName
 					contractId := archived.ContractId
 
-					// Logueamos de forma elegante en el Backend (Terminal)
 					switch templateName {
 					case "SimpleHolding":
 						log.Printf("🔥 [BURN / CONSUMIDO] Bono quemado o transferido. ContractID: %s...", contractId[:15])
-					case "TransferInstruction":
+					case "LockedSimpleHolding":
+						log.Printf("🔓 [LOCKED HOLDING ARCHIVADO] Holding bloqueado liberado. ContractID: %s...", contractId[:15])
+					case "SimpleTransferInstruction":
 						log.Printf("✅ [TRANSFER RESUELTO] Transferencia aceptada, rechazada o retirada.")
-					case "AllocationInstruction":
+					case "SimpleAllocation":
 						log.Printf("✅ [ALLOCATION RESUELTA] Asignación ejecutada o cancelada.")
 					default:
 						log.Printf("🗑️ [CONTRATO ARCHIVADO] Template: %s | ContractID: %s...", templateName, contractId[:15])
 					}
 
-					// Enviamos el aviso al Frontend por WebSocket
-					payload := map[string]any{
+					onEvent(map[string]any{
 						"action":     "archived",
 						"contractId": contractId,
 						"templateId": templateName,
-					}
-					onEvent(payload)
+					})
 				}
+			}
+
+		case *pb.GetUpdatesResponse_OffsetCheckpoint:
+			if offset := u.OffsetCheckpoint.GetOffset(); offset > 0 {
+				lastOffset.Store(offset)
+			}
+
+		case *pb.GetUpdatesResponse_Reassignment:
+			if offset := u.Reassignment.GetOffset(); offset > 0 {
+				lastOffset.Store(offset)
+			}
+
+		case *pb.GetUpdatesResponse_TopologyTransaction:
+			if offset := u.TopologyTransaction.GetOffset(); offset > 0 {
+				lastOffset.Store(offset)
 			}
 		}
 	}

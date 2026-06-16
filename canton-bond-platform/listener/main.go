@@ -1,13 +1,14 @@
 package main
 
 import (
-	"context" // <--- NUEVO
+	"context"
 	"log"
 	"net/http"
 	"os"
 	"os/signal"
-	"strings" // <--- NUEVO
+	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -76,13 +77,15 @@ func main() {
 
 	log.Printf("Bond Listener Iniciado con gRPC (participant=%s)", cfg.ParticipantURL)
 
+	// Track the last seen offset for reconnection resume
+	var lastOffset atomic.Int64
+
 	// 1. Arrancamos el Stream gRPC en una Goroutine paralela
 	go func() {
 		for {
 			log.Printf("Conectando vía gRPC nativo a %s...", cfg.ParticipantURL)
 
-			err := cantonledger.IniciarStreamGRPC(cfg.ParticipantURL, cfg.Party, func(payload map[string]any) {
-				// Bloqueamos mutex para envío seguro a WS
+			err := cantonledger.IniciarStreamGRPC(cfg.ParticipantURL, cfg.Party, &lastOffset, func(payload map[string]any) {
 				clientsMu.Lock()
 				for conn := range wsClients {
 					if err := conn.WriteJSON(payload); err != nil {
@@ -113,6 +116,22 @@ func main() {
 		wsClients[conn] = true
 		clientsMu.Unlock()
 		log.Println("[WS] ¡Nuevo cliente Frontend conectado!")
+
+		// Read loop: detect client disconnection via close frames
+		go func() {
+			defer func() {
+				clientsMu.Lock()
+				delete(wsClients, conn)
+				clientsMu.Unlock()
+				conn.Close()
+				log.Println("[WS] Cliente desconectado y eliminado.")
+			}()
+			for {
+				if _, _, err := conn.ReadMessage(); err != nil {
+					break
+				}
+			}
+		}()
 	})
 
 	// 3. Levantamos el servidor
