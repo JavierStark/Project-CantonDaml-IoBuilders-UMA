@@ -40,8 +40,12 @@ func getEnv(key, fallback string) string {
 func LoadConfig() Config {
 	return Config{
 		ParticipantURL: getEnv("LISTENER_PARTICIPANT_URL", "participant1:5011"),
-		Party:          getEnv("LISTENER_PARTY", "admin"), // Volvemos a usar el nombre corto
+		Party:          getEnv("LISTENER_PARTY", "admin"),
 	}
+}
+
+func getWSPort() string {
+	return getEnv("LISTENER_WS_PORT", "8081")
 }
 
 // --- NUEVA FUNCIÓN DE AUTO-DESCUBRIMIENTO ---
@@ -135,9 +139,10 @@ func main() {
 	})
 
 	// 3. Levantamos el servidor
+	wsPort := getWSPort()
 	go func() {
-		log.Println("Servidor WebSocket a la escucha en el puerto :8081/ws/bonds")
-		if err := http.ListenAndServe(":8081", nil); err != nil {
+		log.Printf("Servidor WebSocket a la escucha en el puerto :%s/ws/bonds", wsPort)
+		if err := http.ListenAndServe(":"+wsPort, nil); err != nil {
 			log.Fatalf("Fallo crítico en servidor HTTP: %v", err)
 		}
 	}()
