@@ -10,31 +10,30 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	pb "canton-bond-platform/pkg/cantonledger/proto/com/daml/ledger/api/v2"
-	adminpb "canton-bond-platform/pkg/cantonledger/proto/com/daml/ledger/api/v2/admin"
 )
 
-// GRPCClient talks to the native Canton Ledger API over gRPC.
+// GRPCClient talks to the native Canton Ledger API over gRPC for state reads,
+// and falls back to the HTTP JSON API for writes and party management.
 type GRPCClient struct {
-	target  string
-	userID  string
-	conn    *grpc.ClientConn
-	state   pb.StateServiceClient
-	cmds    pb.CommandServiceClient
-	parties adminpb.PartyManagementServiceClient
+	target     string
+	userID     string
+	conn       *grpc.ClientConn
+	state      pb.StateServiceClient
+	httpClient *Client
 }
 
-func NewGRPC(target, userID string, _ time.Duration) (*GRPCClient, error) {
+func NewGRPC(target, httpURL, userID string, timeout time.Duration) (*GRPCClient, error) {
 	conn, err := grpc.NewClient(target, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
-		return nil, fmt.Errorf("create grpc client: %w", err)
+		return nil, fmt.Errorf("create grpc ledger client: %w", err)
 	}
+
 	return &GRPCClient{
-		target:  target,
-		userID:  userID,
-		conn:    conn,
-		state:   pb.NewStateServiceClient(conn),
-		cmds:    pb.NewCommandServiceClient(conn),
-		parties: adminpb.NewPartyManagementServiceClient(conn),
+		target:     target,
+		userID:     userID,
+		conn:       conn,
+		state:      pb.NewStateServiceClient(conn),
+		httpClient: New(httpURL, userID, timeout),
 	}, nil
 }
 
@@ -84,69 +83,15 @@ func (c *GRPCClient) ActiveContracts(ctx context.Context, offset int64, _ ...str
 }
 
 func (c *GRPCClient) Parties(ctx context.Context) ([]PartyDetail, error) {
-	var result []PartyDetail
-	pageToken := ""
-	for {
-		resp, err := c.parties.ListKnownParties(ctx, &adminpb.ListKnownPartiesRequest{
-			PageToken: pageToken,
-			PageSize:  1000,
-		})
-		if err != nil {
-			return nil, fmt.Errorf("grpc list parties: %w", err)
-		}
-		for _, p := range resp.GetPartyDetails() {
-			result = append(result, PartyDetail{
-				Party:   p.GetParty(),
-				IsLocal: p.GetIsLocal(),
-			})
-		}
-		pageToken = resp.GetNextPageToken()
-		if pageToken == "" {
-			break
-		}
-	}
-	if result == nil {
-		return []PartyDetail{}, nil
-	}
-	return result, nil
+	return c.httpClient.Parties(ctx)
 }
 
 func (c *GRPCClient) AllocateParty(ctx context.Context, hint string) (PartyDetail, error) {
-	resp, err := c.parties.AllocateParty(ctx, &adminpb.AllocatePartyRequest{
-		PartyIdHint: hint,
-		UserId:      c.userID,
-	})
-	if err != nil {
-		return PartyDetail{}, fmt.Errorf("grpc allocate party: %w", err)
-	}
-	p := resp.GetPartyDetails()
-	if p == nil {
-		return PartyDetail{}, fmt.Errorf("grpc allocate party returned empty party details")
-	}
-	return PartyDetail{
-		Party:   p.GetParty(),
-		IsLocal: p.GetIsLocal(),
-	}, nil
+	return c.httpClient.AllocateParty(ctx, hint)
 }
 
 func (c *GRPCClient) SubmitCommand(ctx context.Context, commandID string, cmd Command, actAs []string) (int64, error) {
-	pbCmd, err := grpcCommand(cmd)
-	if err != nil {
-		return 0, err
-	}
-	resp, err := c.cmds.SubmitAndWait(ctx, &pb.SubmitAndWaitRequest{
-		Commands: &pb.Commands{
-			UserId:    c.userID,
-			CommandId: commandID,
-			ActAs:     actAs,
-			ReadAs:    actAs,
-			Commands:  []*pb.Command{pbCmd},
-		},
-	})
-	if err != nil {
-		return 0, fmt.Errorf("grpc submit-and-wait: %w", err)
-	}
-	return resp.GetCompletionOffset(), nil
+	return c.httpClient.SubmitCommand(ctx, commandID, cmd, actAs)
 }
 
 func grpcWildcardEventFormat() *pb.EventFormat {
@@ -173,48 +118,5 @@ func grpcCreatedEventEntry(evt *pb.CreatedEvent) map[string]any {
 			"templateId":     identifierString(evt.GetTemplateId()),
 			"createArgument": recordToMap(evt.GetCreateArguments()),
 		},
-	}
-}
-
-func grpcCommand(cmd Command) (*pb.Command, error) {
-	switch {
-	case cmd.CreateCommand != nil:
-		templateID, err := identifierFromString(cmd.CreateCommand.TemplateID)
-		if err != nil {
-			return nil, err
-		}
-		args, err := encodeCreateRecord(cmd.CreateCommand.CreateArguments)
-		if err != nil {
-			return nil, err
-		}
-		return &pb.Command{
-			Command: &pb.Command_Create{
-				Create: &pb.CreateCommand{
-					TemplateId:      templateID,
-					CreateArguments: args,
-				},
-			},
-		}, nil
-	case cmd.ExerciseCommand != nil:
-		templateID, err := identifierFromString(cmd.ExerciseCommand.TemplateID)
-		if err != nil {
-			return nil, err
-		}
-		arg, err := encodeChoiceArgument(cmd.ExerciseCommand.ChoiceArgument)
-		if err != nil {
-			return nil, err
-		}
-		return &pb.Command{
-			Command: &pb.Command_Exercise{
-				Exercise: &pb.ExerciseCommand{
-					TemplateId:     templateID,
-					ContractId:     cmd.ExerciseCommand.ContractID,
-					Choice:         cmd.ExerciseCommand.Choice,
-					ChoiceArgument: arg,
-				},
-			},
-		}, nil
-	default:
-		return nil, fmt.Errorf("empty command")
 	}
 }

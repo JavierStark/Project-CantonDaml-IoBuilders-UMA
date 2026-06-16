@@ -27,7 +27,7 @@ func NewServer(cfg Config) (*Server, error) {
 	for _, p := range cfg.Participants {
 		switch cfg.LedgerTransport {
 		case "grpc":
-			client, err := cantonledger.NewGRPC(p.GRPCURL, cfg.UserID, cfg.RequestTimeout)
+			client, err := cantonledger.NewGRPC(p.GRPCURL, p.URL, cfg.UserID, cfg.RequestTimeout)
 			if err != nil {
 				return nil, fmt.Errorf("create grpc ledger client for %s: %w", p.Name, err)
 			}
