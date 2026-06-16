@@ -15,7 +15,7 @@ export default defineConfig({
     timeout: 10000,
   },
   use: {
-    baseURL: 'http://localhost:3000',
+    baseURL: process.env.PLAYWRIGHT_BASE_URL || 'http://localhost:3000',
     headless: true,
     screenshot: 'only-on-failure',
     video: 'retain-on-failure',

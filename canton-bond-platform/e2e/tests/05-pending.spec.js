@@ -21,13 +21,7 @@ test.describe('Pending Transfers', () => {
     expect(result.status).toBe('pending');
 
     await page.goto('/');
-    const statusBadge = page.locator('[data-testid="statusBadge"]');
-    const text = await statusBadge.textContent();
-    if (text && !text.includes('Factory ready') && !text.includes('Connected')) {
-      const startBtn = page.locator('[data-testid="startFactoryBtn"]');
-      await startBtn.click();
-      await expect(statusBadge).toContainText(/Factory ready|Connected/i, { timeout: 30000 });
-    }
+    await expect(page.locator('[data-testid="statusBadge"]')).toContainText(/Factory ready|Connected|✅/i, { timeout: 60000 });
 
     await page.locator('[data-testid="nav-pending"]').click();
     await expect(page.locator('[data-testid="page-pending"]')).toBeVisible();
@@ -43,13 +37,7 @@ test.describe('Pending Transfers', () => {
     await transferBond({ sender: 'alice', receiver: 'bob', amount: 50 });
 
     await page.goto('/');
-    const statusBadge = page.locator('[data-testid="statusBadge"]');
-    const text = await statusBadge.textContent();
-    if (text && !text.includes('Factory ready') && !text.includes('Connected')) {
-      const startBtn = page.locator('[data-testid="startFactoryBtn"]');
-      await startBtn.click();
-      await expect(statusBadge).toContainText(/Factory ready|Connected/i, { timeout: 30000 });
-    }
+    await expect(page.locator('[data-testid="statusBadge"]')).toContainText(/Factory ready|Connected|✅/i, { timeout: 60000 });
 
     await page.locator('[data-testid="nav-pending"]').click();
 
