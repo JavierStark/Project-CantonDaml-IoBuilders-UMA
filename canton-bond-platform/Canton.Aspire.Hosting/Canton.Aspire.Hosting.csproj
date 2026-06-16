@@ -5,7 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PackageId>Canton.Aspire.Hosting</PackageId>
-    <Version>1.0.0</Version>
+    <Version>1.0.5</Version>
     <Description>Canton network Aspire hosting extensions for sequencer, mediator, synchronizer, and participant nodes.</Description>
   </PropertyGroup>
 

@@ -45,7 +45,8 @@ public static class CantonParticipantExtensions
     {
         return builder
             .WithEndpoint("http-json-api", e => { e.Port = port; e.TargetPort = port; })
-            .WithEnvironment("ADDITIONAL_CONFIG_03", "canton.participants.participant.http-ledger-api.port = " + port.ToString());
+            .WithEnvironment("ADDITIONAL_CONFIG_03", "canton.participants.participant.http-ledger-api.port = " + port.ToString())
+            .WithEnvironment("ADDITIONAL_CONFIG_06", "canton.participants.participant.http-ledger-api.address = 0.0.0.0");
     }
 
     public static IResourceBuilder<ContainerResource> WithBootstrapScript(
