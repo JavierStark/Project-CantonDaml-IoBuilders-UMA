@@ -1,6 +1,6 @@
 ﻿#:package Aspire.Hosting.Go@13.4.2-preview.1.26303.6
 #:package Aspire.Hosting.JavaScript@13.4.2
-#:package Canton.Aspire.Hosting@1.0.5
+#:package Canton.Aspire.Hosting@1.0.6
 #:sdk Aspire.AppHost.Sdk@13.4.2
 
 using System.Diagnostics;
