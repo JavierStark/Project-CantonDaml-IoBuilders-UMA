@@ -66,10 +66,13 @@ test.describe('Parties Management', () => {
     await page.locator('[data-testid="partySubmit"]').click();
     await expect(page.locator('[data-testid="partyResult"]')).toContainText(/✅|Party created|already exists|already allocated/i, { timeout: 10000 });
 
-    // Navigate to mint page and check dropdown
+    // Navigate to mint page and reload to pick up the new party
     await page.locator('[data-testid="nav-mint"]').click();
-    await expect(page.locator('[data-testid="page-mint"]')).toBeVisible();
+    await page.waitForTimeout(500);
+    await page.reload();
+    await expect(page.locator('[data-testid="page-mint"]')).toBeVisible({ timeout: 10000 });
     const mintAdmin = page.locator('[data-testid="mintAdmin"]');
+    await expect(mintAdmin.locator(`option[value="${partyName}"]`)).toBeVisible({ timeout: 5000 });
     const options = await mintAdmin.locator('option').allTextContents();
     expect(options).toContain(partyName);
   });

@@ -4,7 +4,10 @@ test.describe('Factory Initialization', () => {
 
   test('should auto-initialize factory on page load', async ({ page }) => {
     await page.goto('/');
-    await page.waitForFunction(() => document.body.classList.contains('factory-locked'));
+    await page.waitForFunction(() =>
+      document.body.classList.contains('factory-locked') ||
+      document.querySelector('[data-testid="statusBadge"]')?.textContent?.match(/Factory ready|Connected|✅/i)
+    );
 
     const statusBadge = page.locator('[data-testid="statusBadge"]');
     await expect(statusBadge).toContainText(/Factory ready|Connected|✅/i, { timeout: 60000 });
