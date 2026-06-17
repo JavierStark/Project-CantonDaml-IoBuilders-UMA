@@ -180,6 +180,8 @@ var listener = builder.AddGoApp("listener", "./listener")
     .WithEnvironment("LISTENER_HTTP_URL", "http://localhost:5013")
     .WithEnvironment("LISTENER_PARTY", "admin");
 
+backend.WithEnvironment("LISTENER_WS_URL", listener.GetEndpoint("http"));
+
 foreach (var p in participants)
     listener = listener.WaitFor(p);
 

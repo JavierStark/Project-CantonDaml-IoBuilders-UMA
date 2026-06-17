@@ -12,3 +12,5 @@ LocalPackages/
 Canton.Aspire.Hosting/bin/
 Canton.Aspire.Hosting/obj/
 prompt.md
+# Vite cache
+.vite/
