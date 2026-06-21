@@ -36,7 +36,7 @@ A Dockerized Canton network with a bond token contract, Go backend API, and web 
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/engine/install/) + [Docker Compose](https://docs.docker.com/compose/install/)
-- Pre-pulled Canton images: `europe-docker.pkg.dev/da-images/public/docker/canton-{base,sequencer,mediator,participant}:3.4.8`
+- Pre-pulled Canton images: `europe-docker.pkg.dev/da-images/public/docker/canton-{base,sequencer,mediator,participant}:3.4.11`
 - [Daml SDK](https://docs.daml.com/) or `dpm` (to build the bond DAR)
 
 ## Quick Start
@@ -72,6 +72,10 @@ participant3       Up X minutes (healthy)
 bond-backend       Up X minutes
 bond-frontend      Up X minutes
 bond-listener      Up X minutes
+otel-collector     Up X minutes
+prometheus         Up X minutes
+tempo              Up X minutes
+grafana            Up X minutes
 ```
 
 Do not call the ledger-backed API endpoints while the participants still show
@@ -137,6 +141,112 @@ If `/api/v1/parties` returns `[]` or `/api/v1/factory` returns
 listener has resolved `admin`, then retry. See
 [`migracion_gRPC.md`](./migracion_gRPC.md) for the full gRPC verification flow,
 fallback mode, and troubleshooting.
+
+## Observability: OpenTelemetry, Prometheus, Tempo, and Grafana
+
+The stack includes a local observability pipeline for Canton and the Go backend:
+
+- Canton metrics are scraped from each Canton container on `:10013/metrics`.
+- Canton and backend traces are sent to the OpenTelemetry Collector through OTLP.
+- The OpenTelemetry Collector exports metrics to Prometheus and traces to Tempo.
+- Grafana is provisioned with Prometheus and Tempo datasources plus a `Canton Overview` dashboard.
+
+Local URLs:
+
+| Service | URL | Purpose |
+|---|---|---|
+| Grafana | http://localhost:3001 | Dashboards and trace exploration |
+| Prometheus | http://localhost:9090 | Metrics database and PromQL |
+| Tempo | http://localhost:3200 | Trace storage/query backend |
+| OpenTelemetry Collector health | http://localhost:13133 | Collector health check |
+| OpenTelemetry Collector zPages | http://localhost:55679/debug/tracez | Collector trace debugging |
+
+Grafana login for local development:
+
+```text
+admin / admin
+```
+
+### Verify observability locally
+
+Start or refresh the stack:
+
+```bash
+docker compose up -d --build
+```
+
+Check the services are running:
+
+```bash
+docker compose ps
+```
+
+Expected observability containers:
+
+```text
+otel-collector   Up X minutes
+prometheus       Up X minutes
+tempo            Up X minutes
+grafana          Up X minutes
+```
+
+Check health endpoints:
+
+```bash
+curl -i -s http://127.0.0.1:13133
+curl -i -s http://127.0.0.1:9090/-/ready
+curl -i -s http://127.0.0.1:3200/ready
+curl -i -s http://127.0.0.1:3001/api/health
+```
+
+Expected result: all four commands return HTTP `200`.
+
+If Tempo returns HTTP `503` with `Ingester not ready: waiting for 15s after
+being ready`, wait 15-30 seconds and run the `/ready` check again. That is a
+normal Tempo warm-up window immediately after container startup.
+
+Check that Canton metrics reach Prometheus:
+
+```bash
+curl -s -G --data-urlencode query=up http://127.0.0.1:9090/api/v1/query
+curl -s -G --data-urlencode query=scrape_samples_scraped http://127.0.0.1:9090/api/v1/query
+curl -s -G --data-urlencode query=daml_grpc_server_duration_seconds_count http://127.0.0.1:9090/api/v1/query
+```
+
+Expected result:
+
+- `up` contains `participant1:10013`, `participant2:10013`, `participant3:10013`, `sequencer1:10013`, and `mediator1:10013`.
+- `scrape_samples_scraped` shows non-zero sample counts for those Canton targets.
+- `daml_grpc_server_duration_seconds_count` returns Canton gRPC metrics with labels such as `component`, `node`, `service`, `grpc_method_name`, and `instance`.
+
+Check that Grafana was provisioned:
+
+```bash
+curl -s -u admin:admin http://127.0.0.1:3001/api/datasources
+curl -s -u admin:admin -G --data-urlencode query=Canton http://127.0.0.1:3001/api/search
+```
+
+Expected result:
+
+- Datasources include `Prometheus` and `Tempo`.
+- Search results include the `Canton Overview` dashboard.
+
+Generate a backend trace and confirm the Collector sees traces:
+
+```bash
+curl -s http://127.0.0.1:8080/api/v1/health
+docker compose logs --tail=100 otel-collector
+```
+
+Expected result: the Collector logs include `Traces` entries after backend/frontend activity.
+
+Open Grafana:
+
+```text
+http://localhost:3001/d/canton-overview/canton-overview
+```
+
+Use `Explore` with the `Tempo` datasource to inspect traces after calling backend endpoints.
 
 ## Project Structure
 

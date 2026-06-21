@@ -25,6 +25,12 @@ processors:
 exporters:
   debug:
     verbosity: basic
+  prometheusremotewrite:
+    endpoint: http://prometheus:9090/api/v1/write
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
 
 extensions:
   health_check:
@@ -38,8 +44,8 @@ service:
     metrics:
       receivers: [prometheus]
       processors: [batch]
-      exporters: [debug]
+      exporters: [debug, prometheusremotewrite]
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug]
+      exporters: [debug, otlp/tempo]

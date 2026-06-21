@@ -82,34 +82,26 @@ static bool IsCommandAvailable(string cmd)
 
 // ---- Canton Infrastructure (using typed integration) ----
 
-var otelCollector = builder.AddContainer("otel-collector", "otel/opentelemetry-collector-contrib:0.128.0")
-    .WithArgs("--config=/etc/otelcol-contrib/config.yaml")
-    .WithBindMount("./configs/otel-collector.yaml", "/etc/otelcol-contrib/config.yaml", isReadOnly: true)
-    .WithEndpoint("otlp-grpc", e => { e.Port = 4317; e.TargetPort = 4317; })
-    .WithEndpoint("otlp-http", e => { e.Port = 4318; e.TargetPort = 4318; })
-    .WithEndpoint("health", e => { e.Port = 13133; e.TargetPort = 13133; })
-    .WithEndpoint("zpages", e => { e.Port = 55679; e.TargetPort = 55679; });
+var tempo = builder.AddTempo();
+var prometheus = builder.AddPrometheus();
+var otelCollector = builder.AddOpenTelemetryCollector()
+    .WaitFor(tempo)
+    .WaitFor(prometheus);
+var grafana = builder.AddGrafana()
+    .WaitFor(prometheus)
+    .WaitFor(tempo);
 
-static IResourceBuilder<ContainerResource> WithCantonOtelTracing(IResourceBuilder<ContainerResource> resource)
-{
-    return resource
-        .WithEnvironment("ADDITIONAL_CONFIG_90", "canton.monitoring.tracing.propagation = enabled")
-        .WithEnvironment("ADDITIONAL_CONFIG_91", "canton.monitoring.tracing.tracer.exporter.type = otlp")
-        .WithEnvironment("ADDITIONAL_CONFIG_92", "canton.monitoring.tracing.tracer.exporter.address = \"otel-collector\"")
-        .WithEnvironment("ADDITIONAL_CONFIG_93", "canton.monitoring.tracing.tracer.exporter.port = 4317")
-        .WithEnvironment("ADDITIONAL_CONFIG_94", "canton.monitoring.tracing.tracer.sampler.type = trace-id-ratio")
-        .WithEnvironment("ADDITIONAL_CONFIG_95", "canton.monitoring.tracing.tracer.sampler.ratio = 0.1")
-        .WithEnvironment("ADDITIONAL_CONFIG_96", "canton.monitoring.tracing.tracer.sampler.parent-based = true");
-}
-
-var sequencer1 = WithCantonOtelTracing(builder.AddCantonSequencer("sequencer1"))
+var sequencer1 = builder.AddCantonSequencer("sequencer1")
+    .WithCantonOpenTelemetryTracing()
     .WaitFor(otelCollector);
-var mediator1 = WithCantonOtelTracing(builder.AddCantonMediator("mediator1"))
+var mediator1 = builder.AddCantonMediator("mediator1")
+    .WithCantonOpenTelemetryTracing()
     .WaitFor(otelCollector);
 var synchronizer = builder.AddCantonSynchronizer("synchronizer")
     .WithRemoteSequencer(sequencer1)
     .WithRemoteMediator(mediator1);
-synchronizer = WithCantonOtelTracing(synchronizer)
+synchronizer = synchronizer
+    .WithCantonOpenTelemetryTracing()
     .WaitFor(otelCollector);
 
 var participantConfigs = new[]
@@ -128,13 +120,7 @@ foreach (var cfg in participantConfigs)
         .WithLedgerPort(cfg.LedgerPort)
         .WithHttpPort(cfg.HttpPort)
         .WithBootstrapScript(cfg.Bootstrap)
-        .WithEnvironment("ADDITIONAL_CONFIG_90", "canton.monitoring.tracing.propagation = enabled")
-        .WithEnvironment("ADDITIONAL_CONFIG_91", "canton.monitoring.tracing.tracer.exporter.type = otlp")
-        .WithEnvironment("ADDITIONAL_CONFIG_92", "canton.monitoring.tracing.tracer.exporter.address = \"otel-collector\"")
-        .WithEnvironment("ADDITIONAL_CONFIG_93", "canton.monitoring.tracing.tracer.exporter.port = 4317")
-        .WithEnvironment("ADDITIONAL_CONFIG_94", "canton.monitoring.tracing.tracer.sampler.type = trace-id-ratio")
-        .WithEnvironment("ADDITIONAL_CONFIG_95", "canton.monitoring.tracing.tracer.sampler.ratio = 0.1")
-        .WithEnvironment("ADDITIONAL_CONFIG_96", "canton.monitoring.tracing.tracer.sampler.parent-based = true")
+        .WithCantonOpenTelemetryTracing()
         .WaitFor(otelCollector)
         .WaitFor(synchronizer);
 
