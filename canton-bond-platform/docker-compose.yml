@@ -1,4 +1,16 @@
 services:
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:0.128.0
+    container_name: otel-collector
+    command: ["--config=/etc/otelcol-contrib/config.yaml"]
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "13133:13133"
+      - "55679:55679"
+    volumes:
+      - ./configs/otel-collector.yaml:/etc/otelcol-contrib/config.yaml:ro
+
   sequencer1:
     image: europe-docker.pkg.dev/da-images/public/docker/canton-sequencer:3.4.11
     container_name: sequencer1
@@ -14,6 +26,16 @@ services:
       - ADDITIONAL_CONFIG_02=canton.sequencers.sequencer.admin-api.port = 5002
       - ADDITIONAL_CONFIG_03=canton.sequencers.sequencer.storage.type = memory
       - ADDITIONAL_CONFIG_04=canton.sequencers.sequencer.sequencer.config.storage.type = memory
+      - ADDITIONAL_CONFIG_90=canton.monitoring.tracing.propagation = enabled
+      - ADDITIONAL_CONFIG_91=canton.monitoring.tracing.tracer.exporter.type = otlp
+      - ADDITIONAL_CONFIG_92=canton.monitoring.tracing.tracer.exporter.address = "otel-collector"
+      - ADDITIONAL_CONFIG_93=canton.monitoring.tracing.tracer.exporter.port = 4317
+      - ADDITIONAL_CONFIG_94=canton.monitoring.tracing.tracer.sampler.type = trace-id-ratio
+      - ADDITIONAL_CONFIG_95=canton.monitoring.tracing.tracer.sampler.ratio = 0.1
+      - ADDITIONAL_CONFIG_96=canton.monitoring.tracing.tracer.sampler.parent-based = true
+    depends_on:
+      otel-collector:
+        condition: service_started
 
   mediator1:
     image: europe-docker.pkg.dev/da-images/public/docker/canton-mediator:3.4.11
@@ -27,6 +49,16 @@ services:
       - LOG_LEVEL_STDOUT=INFO
       - ADDITIONAL_CONFIG_01=canton.mediators.mediator.admin-api.port = 5202
       - ADDITIONAL_CONFIG_02=canton.mediators.mediator.storage.type = memory
+      - ADDITIONAL_CONFIG_90=canton.monitoring.tracing.propagation = enabled
+      - ADDITIONAL_CONFIG_91=canton.monitoring.tracing.tracer.exporter.type = otlp
+      - ADDITIONAL_CONFIG_92=canton.monitoring.tracing.tracer.exporter.address = "otel-collector"
+      - ADDITIONAL_CONFIG_93=canton.monitoring.tracing.tracer.exporter.port = 4317
+      - ADDITIONAL_CONFIG_94=canton.monitoring.tracing.tracer.sampler.type = trace-id-ratio
+      - ADDITIONAL_CONFIG_95=canton.monitoring.tracing.tracer.sampler.ratio = 0.1
+      - ADDITIONAL_CONFIG_96=canton.monitoring.tracing.tracer.sampler.parent-based = true
+    depends_on:
+      otel-collector:
+        condition: service_started
 
   synchronizer:
     image: europe-docker.pkg.dev/da-images/public/docker/canton-base:3.4.11
@@ -42,7 +74,16 @@ services:
       - ADDITIONAL_CONFIG_04=canton.remote-sequencers.sequencer1.admin-api.address = sequencer1
       - ADDITIONAL_CONFIG_05=canton.remote-mediators.mediator1.admin-api.port = 5202
       - ADDITIONAL_CONFIG_06=canton.remote-mediators.mediator1.admin-api.address = mediator1
+      - ADDITIONAL_CONFIG_90=canton.monitoring.tracing.propagation = enabled
+      - ADDITIONAL_CONFIG_91=canton.monitoring.tracing.tracer.exporter.type = otlp
+      - ADDITIONAL_CONFIG_92=canton.monitoring.tracing.tracer.exporter.address = "otel-collector"
+      - ADDITIONAL_CONFIG_93=canton.monitoring.tracing.tracer.exporter.port = 4317
+      - ADDITIONAL_CONFIG_94=canton.monitoring.tracing.tracer.sampler.type = trace-id-ratio
+      - ADDITIONAL_CONFIG_95=canton.monitoring.tracing.tracer.sampler.ratio = 0.1
+      - ADDITIONAL_CONFIG_96=canton.monitoring.tracing.tracer.sampler.parent-based = true
     depends_on:
+      otel-collector:
+        condition: service_started
       sequencer1:
         condition: service_started
       mediator1:
@@ -67,6 +108,13 @@ services:
       - ADDITIONAL_CONFIG_04=canton.participants.participant.ledger-api.auth-services = []
       - ADDITIONAL_CONFIG_05=canton.participants.participant.storage.type = memory
       - ADDITIONAL_CONFIG_06=canton.participants.participant.http-ledger-api.address = 0.0.0.0
+      - ADDITIONAL_CONFIG_90=canton.monitoring.tracing.propagation = enabled
+      - ADDITIONAL_CONFIG_91=canton.monitoring.tracing.tracer.exporter.type = otlp
+      - ADDITIONAL_CONFIG_92=canton.monitoring.tracing.tracer.exporter.address = "otel-collector"
+      - ADDITIONAL_CONFIG_93=canton.monitoring.tracing.tracer.exporter.port = 4317
+      - ADDITIONAL_CONFIG_94=canton.monitoring.tracing.tracer.sampler.type = trace-id-ratio
+      - ADDITIONAL_CONFIG_95=canton.monitoring.tracing.tracer.sampler.ratio = 0.1
+      - ADDITIONAL_CONFIG_96=canton.monitoring.tracing.tracer.sampler.parent-based = true
       
     depends_on:
       synchronizer:
@@ -91,6 +139,13 @@ services:
       - ADDITIONAL_CONFIG_04=canton.participants.participant.ledger-api.auth-services = []
       - ADDITIONAL_CONFIG_05=canton.participants.participant.storage.type = memory
       - ADDITIONAL_CONFIG_06=canton.participants.participant.http-ledger-api.address = 0.0.0.0
+      - ADDITIONAL_CONFIG_90=canton.monitoring.tracing.propagation = enabled
+      - ADDITIONAL_CONFIG_91=canton.monitoring.tracing.tracer.exporter.type = otlp
+      - ADDITIONAL_CONFIG_92=canton.monitoring.tracing.tracer.exporter.address = "otel-collector"
+      - ADDITIONAL_CONFIG_93=canton.monitoring.tracing.tracer.exporter.port = 4317
+      - ADDITIONAL_CONFIG_94=canton.monitoring.tracing.tracer.sampler.type = trace-id-ratio
+      - ADDITIONAL_CONFIG_95=canton.monitoring.tracing.tracer.sampler.ratio = 0.1
+      - ADDITIONAL_CONFIG_96=canton.monitoring.tracing.tracer.sampler.parent-based = true
     depends_on:
       synchronizer:
         condition: service_started
@@ -114,6 +169,13 @@ services:
       - ADDITIONAL_CONFIG_04=canton.participants.participant.ledger-api.auth-services = []
       - ADDITIONAL_CONFIG_05=canton.participants.participant.storage.type = memory
       - ADDITIONAL_CONFIG_06=canton.participants.participant.http-ledger-api.address = 0.0.0.0
+      - ADDITIONAL_CONFIG_90=canton.monitoring.tracing.propagation = enabled
+      - ADDITIONAL_CONFIG_91=canton.monitoring.tracing.tracer.exporter.type = otlp
+      - ADDITIONAL_CONFIG_92=canton.monitoring.tracing.tracer.exporter.address = "otel-collector"
+      - ADDITIONAL_CONFIG_93=canton.monitoring.tracing.tracer.exporter.port = 4317
+      - ADDITIONAL_CONFIG_94=canton.monitoring.tracing.tracer.sampler.type = trace-id-ratio
+      - ADDITIONAL_CONFIG_95=canton.monitoring.tracing.tracer.sampler.ratio = 0.1
+      - ADDITIONAL_CONFIG_96=canton.monitoring.tracing.tracer.sampler.parent-based = true
     depends_on:
       synchronizer:
         condition: service_started
@@ -140,7 +202,12 @@ services:
       - PARTICIPANT3_URL=http://participant3:5033
       - PARTICIPANT3_GRPC_URL=participant3:5031
       - PARTICIPANT3_PARTIES=charlie
+      - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+      - OTEL_EXPORTER_OTLP_INSECURE=true
+      - OTEL_SERVICE_NAME=backend
     depends_on:
+      otel-collector:
+        condition: service_started
       participant1:
         condition: service_started
       participant2:

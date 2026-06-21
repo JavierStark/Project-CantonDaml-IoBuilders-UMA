@@ -68,6 +68,10 @@ func initOTel(ctx context.Context) (*sdktrace.TracerProvider, error) {
 	if endpoint == "" {
 		return nil, nil
 	}
+	serviceName := os.Getenv("OTEL_SERVICE_NAME")
+	if serviceName == "" {
+		serviceName = "backend"
+	}
 
 	exporter, err := otlptracegrpc.New(ctx)
 	if err != nil {
@@ -76,7 +80,7 @@ func initOTel(ctx context.Context) (*sdktrace.TracerProvider, error) {
 
 	res, err := resource.New(ctx,
 		resource.WithAttributes(
-			semconv.ServiceNameKey.String("backend"),
+			semconv.ServiceNameKey.String(serviceName),
 			semconv.ServiceVersionKey.String("1.0.0"),
 		),
 	)
