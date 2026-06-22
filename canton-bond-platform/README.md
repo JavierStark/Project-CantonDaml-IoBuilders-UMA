@@ -141,10 +141,10 @@ fallback mode, and troubleshooting.
 
 Aspire is the local observability entry point:
 
-- Canton nodes export OTLP traces to the Aspire Dashboard OTLP/gRPC port assigned at AppHost startup.
-- The Go backend exports OTLP traces and HTTP metrics to the `ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL` value injected by Aspire.
-- Aspire shows resource state, logs, traces, trace details, and backend metrics without running Grafana, Tempo, or Prometheus.
-- Canton still exposes its own Prometheus metrics endpoint internally on port `10013`, but the Aspire migration currently uses Canton OTLP tracing plus backend OTLP metrics. Canton Prometheus scraping is not part of the Aspire flow.
+- Canton nodes export OTLP traces to the local `otel-collector`.
+- Canton nodes expose internal Prometheus metrics on `:10013`; the `otel-collector` scrapes those metrics and exports them to Aspire as OTLP metrics.
+- The Go backend exports OTLP traces and HTTP metrics to the same local collector.
+- Aspire shows resource state, logs, traces, trace details, backend metrics, and Canton internal metrics without running Grafana, Tempo, or Prometheus.
 
 Start or refresh the Aspire AppHost:
 
@@ -167,21 +167,26 @@ done
 ```
 
 Expected result: Aspire shows `backend` spans and Canton spans from
-`sequencer1`, `mediator1`, `synchronizer`, and the participants. In the
-`Metrics` view, filter by `backend` and look for:
+`sequencer1`, `mediator1`, `synchronizer`, and the participants.
+
+In the `Metrics` view, filter by `canton` or by a Canton resource and look for
+internal Canton metrics such as:
+
+- `daml_cache_hits`
+- `daml_cache_size`
+- `daml_db_commit_duration_seconds`
+- `daml_db_storage_general_executor_load`
+- `daml_grpc_server_duration_seconds`
+
+For backend metrics, filter by `backend` and look for:
 
 - `http.server.request.count`
 - `http.server.request.duration`
 
 If traces are missing, check the Canton resource environment in Aspire. It
 should contain `canton.monitoring.tracing.tracer.exporter.address =
-"host.docker.internal"` and `canton.monitoring.tracing.tracer.exporter.port =
+ "otel-collector"` and `canton.monitoring.tracing.tracer.exporter.port =
 4317`.
-
-On Linux, if Canton containers cannot resolve `host.docker.internal`, set
-`ASPIRE_DASHBOARD_OTLP_CONTAINER_HOST` before running the AppHost to a host
-address reachable from the Docker bridge.
-
 ## Project Structure
 
 ```
@@ -198,7 +203,7 @@ address reachable from the Docker bridge.
 ├── dars/                         # Pre-built DAR files
 │   ├── splice-api-token-*.dar    # CIP-056 interface DARs (5 files)
 │   └── simple-token-0.1.0.dar   # Built bond contract DAR
-├── configs/                      # Canton bootstrap configuration
+├── configs/                      # Canton bootstrap and collector configuration
 │   ├── shared-bootstrap.sc       # Shared init + DAR upload helpers
 │   ├── sequencer-bootstrap.sc
 │   ├── mediator-bootstrap.sc
@@ -206,7 +211,8 @@ address reachable from the Docker bridge.
 │   ├── synchronizer-remote.conf
 │   ├── participant1-bootstrap.sc # Init + DAR upload + parties (admin, alice, executor)
 │   ├── participant2-bootstrap.sc # Init + DAR upload + parties (bob)
-│   └── participant3-bootstrap.sc # Init + DAR upload + parties (charlie)
+│   ├── participant3-bootstrap.sc # Init + DAR upload + parties (charlie)
+│   └── otel-collector.yaml       # OpenTelemetry collector config
 ├── backend/                      # Go REST API server
 │   ├── Dockerfile
 │   ├── go.mod
@@ -217,9 +223,7 @@ address reachable from the Docker bridge.
 │       └── api/
 │           ├── server.go         # Router, middleware, CORS
 │           └── handlers.go       # All API handlers
-└── frontend/                     # Static web frontend
-    ├── Dockerfile                # nginx
-    ├── nginx.conf                # Reverse proxy /api/ -> backend
+└── frontend/                     # Static web frontend (Vite SPA, served via Aspire YARP proxy)
     └── html/
         ├── index.html            # SPA with all pages
         ├── app.js                # API client + UI logic

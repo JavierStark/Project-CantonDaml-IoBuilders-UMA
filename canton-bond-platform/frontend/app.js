@@ -696,8 +696,9 @@ $('burnParty').addEventListener('change', loadBurnHoldings);
 // Init - auto-create factory
 (async function init() {
     try {
-        await api('/health');
-        initWebSocket();
+        const health = await api('/health');
+        const listenerUrl = health.listenerUrl || null;
+        initWebSocket(listenerUrl);
         setFactoryLocked(true, 'Initializing...');
         $('dashboardHoldings').innerHTML = '<p class="loading">Press Start Factory to initialize the ledger.</p>';
 
@@ -730,9 +731,10 @@ $('burnParty').addEventListener('change', loadBurnHoldings);
 })();
 
 // ---- Conexión WebSocket en Tiempo Real ----
-function initWebSocket() {
+function initWebSocket(listenerUrl) {
     const wsHost = window.location.hostname;
-    const ws = new WebSocket(`ws://${wsHost}:8081/ws/bonds`);
+    const url = listenerUrl || `ws://${wsHost}:8081/ws/bonds`;
+    const ws = new WebSocket(url);
 
     ws.onopen = () => {
         console.log('✅ Conectado al Listener en vivo (WebSocket)');
@@ -764,7 +766,7 @@ function initWebSocket() {
 
     ws.onclose = () => {
         console.log('❌ WebSocket desconectado. Reintentando en 5s...');
-        setTimeout(initWebSocket, 5000);
+        setTimeout(() => initWebSocket(listenerUrl), 5000);
     };
 
     ws.onerror = (err) => {

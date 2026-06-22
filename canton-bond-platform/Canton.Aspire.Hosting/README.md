@@ -86,16 +86,20 @@ var participant1 = builder.AddCantonParticipant("participant1")
 | Bootstrap path | `./configs/shared-bootstrap.sc` |
 | Storage | `memory` (override via `.WithEnvironment()`) |
 
-### OpenTelemetry tracing
+### OpenTelemetry
 
 ```csharp
+var otelCollector = builder.AddOpenTelemetryCollector();
+
 builder.AddCantonSequencer("sequencer1")
-    .WithCantonOpenTelemetryTracing("host.docker.internal", 4317);
+    .WithCantonOpenTelemetry("otel-collector", 4317)
+    .WaitFor(otelCollector);
 ```
 
-`WithCantonOpenTelemetryTracing` configures Canton OTLP tracing and adds the
-Docker host alias needed for containers to reach the Aspire Dashboard OTLP/gRPC
-endpoint. The platform AppHost wires this to the port printed by Aspire.
+`AddOpenTelemetryCollector` starts an OpenTelemetry Collector for the platform.
+`WithCantonOpenTelemetry` configures Canton OTLP tracing to send spans to that
+collector. The collector also scrapes Canton internal Prometheus metrics on
+`:10013` and exports traces and metrics to the Aspire Dashboard.
 
 ## Build
 
@@ -113,7 +117,7 @@ The built `.nupkg` is placed in `LocalPackages/`, which is registered as a local
 in `nuget.config`. The AppHost references it via:
 
 ```
-#:package Canton.Aspire.Hosting@1.0.10
+#:package Canton.Aspire.Hosting@1.0.11
 ```
 
 ## Run

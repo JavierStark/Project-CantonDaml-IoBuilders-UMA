@@ -24,6 +24,7 @@ type Config struct {
 	UserID          string
 	RequestTimeout  time.Duration
 	LedgerTransport string
+	ListenerWsUrl   string
 }
 
 func Load() (Config, error) {
@@ -42,6 +43,13 @@ func Load() (Config, error) {
 
 	userID := getEnv("CANTON_USER_ID", "ledger-api-user")
 	ledgerTransport := strings.ToLower(getEnv("LEDGER_TRANSPORT", "grpc"))
+	listenerHttpUrl := getEnv("LISTENER_WS_URL", "")
+	listenerWsUrl := ""
+	if listenerHttpUrl != "" {
+		listenerWsUrl = strings.Replace(listenerHttpUrl, "http://", "ws://", 1)
+		listenerWsUrl = strings.Replace(listenerWsUrl, "https://", "wss://", 1)
+		listenerWsUrl += "/ws/bonds"
+	}
 	if ledgerTransport != "grpc" && ledgerTransport != "http" {
 		return Config{}, fmt.Errorf("invalid LEDGER_TRANSPORT %q: expected grpc or http", ledgerTransport)
 	}
@@ -74,6 +82,7 @@ func Load() (Config, error) {
 		UserID:          userID,
 		RequestTimeout:  requestTimeout,
 		LedgerTransport: ledgerTransport,
+		ListenerWsUrl:   listenerWsUrl,
 	}, nil
 }
 

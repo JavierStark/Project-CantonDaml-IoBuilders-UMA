@@ -188,7 +188,11 @@ func (s *Server) lookupPartyIdentifier(ctx context.Context, client cantonledger.
 }
 
 func (s *Server) handleHealth(c echo.Context) error {
-	return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+	resp := map[string]any{"status": "ok"}
+	if s.cfg.ListenerWsUrl != "" {
+		resp["listenerUrl"] = s.cfg.ListenerWsUrl
+	}
+	return c.JSON(http.StatusOK, resp)
 }
 
 func (s *Server) handleParties(c echo.Context) error {
@@ -630,7 +634,10 @@ func (s *Server) handleTransfer(c echo.Context) error {
 		},
 	}
 
-	offset, err := client.SubmitCommand(ctx, cmdID, submitReq, []string{senderID})
+	// Submit to participant1 (factory's participant) so the factory contract
+	// is always resolvable. Admin is a controller of TransferFactory_Transfer
+	// and lives on participant1.
+	offset, err := factoryClient.SubmitCommand(ctx, cmdID, submitReq, []string{factoryAdmin})
 	if err != nil {
 		log.Printf("transfer error: %v", err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("transfer failed: %v", err)})
@@ -1162,7 +1169,10 @@ func (s *Server) handleCreateAllocation(c echo.Context) error {
 		},
 	}
 
-	offset, err := client.SubmitCommand(ctx, cmdID, submitReq, []string{senderID})
+	// Submit to participant1 (factory's participant) so the factory contract
+	// is always resolvable. Admin is a controller of AllocationFactory_Allocate
+	// and lives on participant1.
+	offset, err := factoryClient.SubmitCommand(ctx, cmdID, submitReq, []string{factoryAdmin})
 	if err != nil {
 		log.Printf("allocation error: %v", err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("allocation failed: %v", err)})

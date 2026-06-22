@@ -67,7 +67,6 @@ services:
       - ADDITIONAL_CONFIG_04=canton.participants.participant.ledger-api.auth-services = []
       - ADDITIONAL_CONFIG_05=canton.participants.participant.storage.type = memory
       - ADDITIONAL_CONFIG_06=canton.participants.participant.http-ledger-api.address = 0.0.0.0
-      
     depends_on:
       synchronizer:
         condition: service_started
@@ -147,17 +146,6 @@ services:
         condition: service_started
       participant3:
         condition: service_started
-    restart: on-failure
-
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: bond-frontend
-    ports:
-      - "3000:80"
-    depends_on:
-      - backend
     restart: on-failure
 
   listener:

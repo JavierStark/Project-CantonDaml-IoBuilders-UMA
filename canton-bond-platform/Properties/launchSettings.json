@@ -4,11 +4,10 @@
     "https": {
       "commandName": "Project",
       "applicationUrl": "https://localhost:17193;http://localhost:15170",
-        "environmentVariables": {
-          "ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL": "http://0.0.0.0:4317",
-          "ASPIRE_ALLOW_UNSECURED_TRANSPORT": "true",
-          "ASPIRE_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS": "true"
-        }
+      "environmentVariables": {
+        "ASPIRE_ALLOW_UNSECURED_TRANSPORT": "true",
+        "ASPIRE_DASHBOARD_UNSECURED_ALLOW_ANONYMOUS": "true"
       }
+    }
   }
 }

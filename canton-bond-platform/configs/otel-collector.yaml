@@ -3,8 +3,6 @@ receivers:
     protocols:
       grpc:
         endpoint: 0.0.0.0:4317
-      http:
-        endpoint: 0.0.0.0:4318
 
   prometheus:
     config:
@@ -18,34 +16,34 @@ receivers:
                 - participant1:10013
                 - participant2:10013
                 - participant3:10013
+          metric_relabel_configs:
+            - source_labels: [__name__]
+              regex: "daml_health_status|daml_cache_(hits|misses|size|weight)|daml_db_storage_(general|write)_executor_(load|running)|daml_grpc_server_requests_(active|limit)|daml_participant_api_(commands_submissions_running|execution_engine_running|execution_total_running|index_updates_buffer_size|index_ledger_end_sequential_id|indexer_ledger_end_sequential_id|indexer_updates|lapi_streams_updates_sent)|daml_mediator_(outstanding_requests|max_event_age)|daml_sequencer_block_(height|delay)|daml_sequencer_client_submissions_in_flight"
+              action: keep
 
 processors:
+  resource/canton:
+    attributes:
+      - key: service.name
+        value: canton
+        action: upsert
   batch:
 
 exporters:
-  debug:
-    verbosity: basic
-  prometheusremotewrite:
-    endpoint: http://prometheus:9090/api/v1/write
-  otlp/tempo:
-    endpoint: tempo:4317
+  otlp/aspire:
+    endpoint: ${env:OTEL_EXPORTER_OTLP_ENDPOINT}
+    headers:
+      x-otlp-api-key: ${env:ASPIRE_API_KEY}
     tls:
       insecure: true
 
-extensions:
-  health_check:
-    endpoint: 0.0.0.0:13133
-  zpages:
-    endpoint: 0.0.0.0:55679
-
 service:
-  extensions: [health_check, zpages]
   pipelines:
     metrics:
       receivers: [prometheus]
-      processors: [batch]
-      exporters: [debug, prometheusremotewrite]
+      processors: [resource/canton, batch]
+      exporters: [otlp/aspire]
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug, otlp/tempo]
+      exporters: [otlp/aspire]
