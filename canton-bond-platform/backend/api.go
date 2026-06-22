@@ -7,12 +7,16 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 	"go.opentelemetry.io/contrib/instrumentation/github.com/labstack/echo/otelecho"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/metric"
 
 	"canton-bond-platform/pkg/cantonledger"
 )
@@ -52,6 +56,7 @@ func (s *Server) Router() *echo.Echo {
 		AllowHeaders: []string{"Content-Type", "Authorization"},
 	}))
 	e.Use(otelecho.Middleware("backend"))
+	e.Use(otelMetricsMiddleware())
 	e.Use(middleware.Logger())
 	e.Use(middleware.Recover())
 
@@ -77,6 +82,50 @@ func (s *Server) Router() *echo.Echo {
 	v1.POST("/factory", s.handleFactory)
 
 	return e
+}
+
+func otelMetricsMiddleware() echo.MiddlewareFunc {
+	meter := otel.Meter("canton-bond-platform/backend")
+
+	requests, err := meter.Int64Counter(
+		"http.server.request.count",
+		metric.WithDescription("HTTP requests processed by the backend"),
+	)
+	if err != nil {
+		log.Printf("[WARN] create request counter metric: %v", err)
+	}
+
+	duration, err := meter.Float64Histogram(
+		"http.server.request.duration",
+		metric.WithDescription("HTTP request duration in milliseconds"),
+		metric.WithUnit("ms"),
+	)
+	if err != nil {
+		log.Printf("[WARN] create request duration metric: %v", err)
+	}
+
+	return func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			start := time.Now()
+			err := next(c)
+			status := c.Response().Status
+			if status == 0 {
+				status = http.StatusOK
+			}
+
+			attrs := []attribute.KeyValue{
+				attribute.String("http.request.method", c.Request().Method),
+				attribute.String("http.route", c.Path()),
+				attribute.String("http.response.status_code", strconv.Itoa(status)),
+			}
+
+			ctx := c.Request().Context()
+			requests.Add(ctx, 1, metric.WithAttributes(attrs...))
+			duration.Record(ctx, float64(time.Since(start).Milliseconds()), metric.WithAttributes(attrs...))
+
+			return err
+		}
+	}
 }
 
 func (s *Server) clientForParty(party string) (cantonledger.LedgerClient, error) {

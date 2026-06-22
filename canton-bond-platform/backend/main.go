@@ -2,15 +2,19 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
@@ -20,12 +24,12 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	tp, err := initOTel(ctx)
+	providers, err := initOTel(ctx)
 	if err != nil {
-		log.Printf("[WARN] OTel init: %v (continuing without tracing)", err)
-	} else {
+		log.Printf("[WARN] OTel init: %v (continuing without telemetry)", err)
+	} else if providers != nil {
 		defer func() {
-			if err := tp.Shutdown(context.Background()); err != nil {
+			if err := providers.Shutdown(context.Background()); err != nil {
 				log.Printf("[WARN] OTel shutdown: %v", err)
 			}
 		}()
@@ -63,7 +67,29 @@ func main() {
 	e.Logger.Fatal(e.Start(addr))
 }
 
-func initOTel(ctx context.Context) (*sdktrace.TracerProvider, error) {
+type otelProviders struct {
+	traces  *sdktrace.TracerProvider
+	metrics *sdkmetric.MeterProvider
+}
+
+func (p *otelProviders) Shutdown(ctx context.Context) error {
+	if p == nil {
+		return nil
+	}
+	return errors.Join(
+		shutdownProvider(ctx, p.metrics),
+		shutdownProvider(ctx, p.traces),
+	)
+}
+
+func shutdownProvider(ctx context.Context, provider interface{ Shutdown(context.Context) error }) error {
+	if provider == nil {
+		return nil
+	}
+	return provider.Shutdown(ctx)
+}
+
+func initOTel(ctx context.Context) (*otelProviders, error) {
 	endpoint := os.Getenv("OTEL_EXPORTER_OTLP_ENDPOINT")
 	if endpoint == "" {
 		return nil, nil
@@ -71,11 +97,6 @@ func initOTel(ctx context.Context) (*sdktrace.TracerProvider, error) {
 	serviceName := os.Getenv("OTEL_SERVICE_NAME")
 	if serviceName == "" {
 		serviceName = "backend"
-	}
-
-	exporter, err := otlptracegrpc.New(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("create OTLP exporter: %w", err)
 	}
 
 	res, err := resource.New(ctx,
@@ -88,16 +109,35 @@ func initOTel(ctx context.Context) (*sdktrace.TracerProvider, error) {
 		return nil, fmt.Errorf("create resource: %w", err)
 	}
 
+	traceExporter, err := otlptracegrpc.New(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create OTLP trace exporter: %w", err)
+	}
+
 	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
+		sdktrace.WithBatcher(traceExporter),
 		sdktrace.WithResource(res),
 	)
 
+	metricExporter, err := otlpmetricgrpc.New(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("create OTLP metric exporter: %w", err)
+	}
+
+	mp := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(
+			metricExporter,
+			sdkmetric.WithInterval(15*time.Second),
+		)),
+		sdkmetric.WithResource(res),
+	)
+
 	otel.SetTracerProvider(tp)
+	otel.SetMeterProvider(mp)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
 		propagation.Baggage{},
 	))
 
-	return tp, nil
+	return &otelProviders{traces: tp, metrics: mp}, nil
 }

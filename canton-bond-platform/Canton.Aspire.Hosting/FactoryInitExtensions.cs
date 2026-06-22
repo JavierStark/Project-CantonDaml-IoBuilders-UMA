@@ -45,7 +45,7 @@ public static class FactoryInitExtensions
                         });
 
                         Console.WriteLine("[FactoryInitExtensions] Starting init logic...");
-                        using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+                        using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(30) };
 
                         var p1Url = "http://localhost:5013";
                         var allUrls = new[] { p1Url, "http://localhost:5023", "http://localhost:5033" };
@@ -55,7 +55,7 @@ public static class FactoryInitExtensions
                         bool factoryExists = false;
                         const string FactoryTemplateId = "#simple-token:SimpleToken.Rules:SimpleTokenRules";
 
-                        await RetryAsync(ct, 20, 3000, async token =>
+                        await RetryAsync(ct, 90, 3000, async token =>
                         {
                             var ledgerJson = await http.GetStringAsync($"{p1Url}/v2/state/ledger-end", token);
                             offset = System.Text.Json.JsonDocument.Parse(ledgerJson).RootElement.GetProperty("offset").GetInt64();
@@ -88,10 +88,10 @@ public static class FactoryInitExtensions
 
                             var filterResp = await http.PostAsync($"{p1Url}/v2/state/active-contracts",
                                 new System.Net.Http.StringContent(filterPayload, System.Text.Encoding.UTF8, "application/json"), token);
-                            filterResp.EnsureSuccessStatusCode();
+                            await EnsureSuccessWithBodyAsync(filterResp, token);
                             var contractsBody = await filterResp.Content.ReadAsStringAsync(token);
                             factoryExists = contractsBody.Contains(FactoryTemplateId);
-                        }, "Querying ledger-end and checking existing factory");
+                        }, "Waiting for participant1 JSON API and checking existing factory");
 
                         if (factoryExists)
                         {
@@ -105,7 +105,7 @@ public static class FactoryInitExtensions
                         }
 
                         string? adminParty = null;
-                        await RetryAsync(ct, 10, 3000, async token =>
+                        await RetryAsync(ct, 90, 3000, async token =>
                         {
                             var partiesJson = await http.GetStringAsync($"{p1Url}/v2/parties", token);
                             using var doc = System.Text.Json.JsonDocument.Parse(partiesJson);
@@ -144,7 +144,7 @@ public static class FactoryInitExtensions
                             }
                         }
 
-                        await RetryAsync(ct, 5, 3000, async token =>
+                        await RetryAsync(ct, 10, 3000, async token =>
                         {
                             var createPayload = System.Text.Json.JsonSerializer.Serialize(new
                             {
@@ -173,7 +173,7 @@ public static class FactoryInitExtensions
                             Console.WriteLine("[FactoryInitExtensions] Creating factory contract...");
                             var createResp = await http.PostAsync($"{p1Url}/v2/commands/submit-and-wait",
                                 new System.Net.Http.StringContent(createPayload, System.Text.Encoding.UTF8, "application/json"), token);
-                            createResp.EnsureSuccessStatusCode();
+                            await EnsureSuccessWithBodyAsync(createResp, token);
                             Console.WriteLine("[FactoryInitExtensions] Factory contract created successfully");
                         }, "Creating factory contract");
 
@@ -219,11 +219,23 @@ public static class FactoryInitExtensions
             }
             catch (Exception ex) when (i < maxRetries - 1)
             {
-                Console.WriteLine($"[FactoryInitExtensions] {description} attempt {i + 1}/{maxRetries}: {ex.Message}");
+                        Console.WriteLine($"[FactoryInitExtensions] {description} attempt {i + 1}/{maxRetries}: {ex.GetBaseException().Message}");
                 await Task.Delay(delayMs, ct);
             }
         }
 
         await operation(ct);
+    }
+
+    private static async Task EnsureSuccessWithBodyAsync(
+        System.Net.Http.HttpResponseMessage response,
+        CancellationToken ct)
+    {
+        if (response.IsSuccessStatusCode)
+            return;
+
+        var body = await response.Content.ReadAsStringAsync(ct);
+        throw new System.Net.Http.HttpRequestException(
+            $"Response status code does not indicate success: {(int)response.StatusCode} ({response.ReasonPhrase}). Body: {body}");
     }
 }

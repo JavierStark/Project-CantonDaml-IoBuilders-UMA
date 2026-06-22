@@ -86,6 +86,17 @@ var participant1 = builder.AddCantonParticipant("participant1")
 | Bootstrap path | `./configs/shared-bootstrap.sc` |
 | Storage | `memory` (override via `.WithEnvironment()`) |
 
+### OpenTelemetry tracing
+
+```csharp
+builder.AddCantonSequencer("sequencer1")
+    .WithCantonOpenTelemetryTracing("host.docker.internal", 4317);
+```
+
+`WithCantonOpenTelemetryTracing` configures Canton OTLP tracing and adds the
+Docker host alias needed for containers to reach the Aspire Dashboard OTLP/gRPC
+endpoint. The platform AppHost wires this to the port printed by Aspire.
+
 ## Build
 
 Requires .NET 10 SDK and the Aspire CLI.
@@ -95,22 +106,22 @@ Requires .NET 10 SDK and the Aspire CLI.
 dotnet pack Canton.Aspire.Hosting/ -c Release -o LocalPackages
 
 # Or with a specific version:
-dotnet pack Canton.Aspire.Hosting/ -c Release -o LocalPackages /p:Version=1.0.4
+dotnet pack Canton.Aspire.Hosting/ -c Release -o LocalPackages /p:Version=1.0.10
 ```
 
 The built `.nupkg` is placed in `LocalPackages/`, which is registered as a local NuGet source
 in `nuget.config`. The AppHost references it via:
 
 ```
-#:package Canton.Aspire.Hosting@1.0.4
+#:package Canton.Aspire.Hosting@1.0.10
 ```
 
 ## Run
 
 ```bash
 dotnet pack Canton.Aspire.Hosting/ -c Release -o LocalPackages
-aspire start
+./start-aspire.sh
 ```
 
-Or use the Aspire CLI from the AppHost directory — the package is resolved automatically from
-the local NuGet source.
+Or use the Aspire CLI from the AppHost directory. The package is resolved
+automatically from the local NuGet source.

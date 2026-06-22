@@ -13,7 +13,7 @@ en [`canton-learning-labs`](./canton-learning-labs).
 - Backend Go con API REST para operar contra Canton Ledger API gRPC.
 - Frontend web para emitir, consultar, transferir, quemar y liquidar bonos.
 - Listener de eventos del ledger.
-- Stack local de observabilidad con OpenTelemetry, Prometheus, Tempo y Grafana.
+- Observabilidad local con OpenTelemetry y Aspire Dashboard.
 - Pruebas end-to-end con Playwright.
 
 La plataforma levanta una topologia Canton local con un sequencer, un mediator,
@@ -34,15 +34,18 @@ Desde la carpeta principal de la plataforma:
 
 ```bash
 cd canton-bond-platform
-docker compose up -d
+./start-aspire.sh
 ```
 
 URLs locales principales:
 
-- Frontend: http://localhost:3000
-- Backend REST: http://localhost:8080/api/v1
-- Grafana: http://localhost:3001
-- Prometheus: http://localhost:9090
+- Aspire Dashboard: https://localhost:17193
+- Aspire OTLP/gRPC: http://localhost:4317
+- Frontend y backend REST: ver los endpoints publicados en la vista
+  `Resources` de Aspire; sus puertos pueden cambiar entre arranques.
+
+La ruta recomendada de observabilidad es Aspire Dashboard. Grafana,
+Prometheus y Tempo ya no se levantan en el flujo principal.
 
 Para mas detalle, ver [`canton-bond-platform/README.md`](./canton-bond-platform/README.md).
 

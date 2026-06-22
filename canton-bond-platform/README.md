@@ -1,6 +1,6 @@
 # Canton Bond Platform
 
-A Dockerized Canton network with a bond token contract, Go backend API, and web frontend.
+A Canton network with a bond token contract, Go backend API, web frontend, and Aspire Dashboard observability.
 
 ## Architecture
 
@@ -36,6 +36,7 @@ A Dockerized Canton network with a bond token contract, Go backend API, and web 
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/engine/install/) + [Docker Compose](https://docs.docker.com/compose/install/)
+- [Aspire CLI](https://aspire.dev/) 13.4 or newer
 - Pre-pulled Canton images: `europe-docker.pkg.dev/da-images/public/docker/canton-{base,sequencer,mediator,participant}:3.4.11`
 - [Daml SDK](https://docs.daml.com/) or `dpm` (to build the bond DAR)
 
@@ -49,76 +50,70 @@ cp .daml/dist/simple-token-0.1.0.dar ../dars/
 cd ..
 ```
 
-### 2. Start everything
+### 2. Start everything with Aspire
+
+```bash
+./start-aspire.sh
+```
+
+The script starts the AppHost in the foreground and Aspire prints the Dashboard
+URL plus the OTLP/gRPC endpoint it assigned for that run.
+
+Wait for the Canton participants to finish bootstrap, then verify from the Aspire Dashboard
+Resources view. If you use the Docker Compose fallback instead, run:
 
 ```bash
 docker compose up -d
 ```
 
-Wait for the Canton participants to finish bootstrap, then verify:
-
-```bash
-docker ps --format "table {{.Names}}\t{{.Status}}"
-```
-
-Expected output:
-```
-sequencer1         Up X minutes
-mediator1          Up X minutes
-synchronizer       Up X minutes
-participant1       Up X minutes (healthy)
-participant2       Up X minutes (healthy)
-participant3       Up X minutes (healthy)
-bond-backend       Up X minutes
-bond-frontend      Up X minutes
-bond-listener      Up X minutes
-otel-collector     Up X minutes
-prometheus         Up X minutes
-tempo              Up X minutes
-grafana            Up X minutes
-```
+The Compose fallback is only for running the application stack without Aspire.
+It does not start Grafana, Prometheus, Tempo, or the Aspire Dashboard.
 
 Do not call the ledger-backed API endpoints while the participants still show
 `health: starting`. On a clean in-memory startup, Canton may need 1-2 minutes to
 initialize identities, connect the synchronizer, expose the Ledger API gRPC
 ports, and create the parties.
 
-### 3. Initialize the factory contract
+### 3. Use the Aspire endpoints
 
-The factory contract (SimpleTokenRules) is auto-created when first needed. Trigger it:
+Aspire publishes backend and frontend endpoints dynamically. Open the Aspire
+Dashboard URL printed by `./start-aspire.sh`, go to `Resources`, and copy the
+endpoint for `frontend` or `backend`.
+
+For shell checks, set the backend endpoint once:
 
 ```bash
-curl -s http://localhost:8080/api/v1/factory | jq .
+export BACKEND_URL=http://127.0.0.1:<backend-port>
+curl -s "$BACKEND_URL/api/v1/health" | jq .
 ```
 
-Or open http://localhost:3000 in your browser and click around — the frontend will initialize everything.
+The factory contract (`SimpleTokenRules`) is auto-created by the `factory-init`
+resource during startup. You can also query it explicitly:
+
+```bash
+curl -s "$BACKEND_URL/api/v1/factory" | jq .
+```
+
+Or open the frontend endpoint from Aspire and click around. The frontend uses
+the backend endpoint injected by Aspire.
 
 ### 4. Verify gRPC transport
 
 The public REST API stays the same, but the backend uses the native Canton
 Ledger API gRPC by default.
 
-Check the backend logs:
-
-```bash
-docker compose logs backend
-```
-
-Expected lines:
+Check the `backend` logs from the Aspire Dashboard, or from the terminal where
+`./start-aspire.sh` is running. Expected lines:
 
 ```text
 ledger transport: grpc
-participant participant1 -> participant1:5011 (grpc), fallback http http://participant1:5013
-participant participant2 -> participant2:5021 (grpc), fallback http http://participant2:5023
-participant participant3 -> participant3:5031 (grpc), fallback http http://participant3:5033
+participant participant1 -> localhost:5011 (grpc), fallback http http://localhost:5013
+participant participant2 -> localhost:5021 (grpc), fallback http http://localhost:5023
+participant participant3 -> localhost:5031 (grpc), fallback http http://localhost:5033
 ```
 
 Check that the listener has resolved the `admin` party and opened the gRPC
-stream:
-
-```bash
-docker compose logs listener
-```
+stream by opening the `listener` logs in Aspire.
 
 Expected lines:
 
@@ -131,9 +126,9 @@ Stream gRPC abierto. Esperando eventos para enviar a los WebSockets...
 Then verify the REST endpoints:
 
 ```bash
-curl -s http://localhost:8080/api/v1/health
-curl -s http://localhost:8080/api/v1/parties
-curl -s http://localhost:8080/api/v1/factory
+curl -s "$BACKEND_URL/api/v1/health"
+curl -s "$BACKEND_URL/api/v1/parties"
+curl -s "$BACKEND_URL/api/v1/factory"
 ```
 
 If `/api/v1/parties` returns `[]` or `/api/v1/factory` returns
@@ -142,117 +137,56 @@ listener has resolved `admin`, then retry. See
 [`migracion_gRPC.md`](./migracion_gRPC.md) for the full gRPC verification flow,
 fallback mode, and troubleshooting.
 
-## Observability: OpenTelemetry, Prometheus, Tempo, and Grafana
+## Observability: Aspire Dashboard
 
-The stack includes a local observability pipeline for Canton and the Go backend:
+Aspire is the local observability entry point:
 
-- Canton metrics are scraped from each Canton container on `:10013/metrics`.
-- Canton and backend traces are sent to the OpenTelemetry Collector through OTLP.
-- The OpenTelemetry Collector exports metrics to Prometheus and traces to Tempo.
-- Grafana is provisioned with Prometheus and Tempo datasources plus a `Canton Overview` dashboard.
+- Canton nodes export OTLP traces to the Aspire Dashboard OTLP/gRPC port assigned at AppHost startup.
+- The Go backend exports OTLP traces and HTTP metrics to the `ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL` value injected by Aspire.
+- Aspire shows resource state, logs, traces, trace details, and backend metrics without running Grafana, Tempo, or Prometheus.
+- Canton still exposes its own Prometheus metrics endpoint internally on port `10013`, but the Aspire migration currently uses Canton OTLP tracing plus backend OTLP metrics. Canton Prometheus scraping is not part of the Aspire flow.
 
-Local URLs:
-
-| Service | URL | Purpose |
-|---|---|---|
-| Grafana | http://localhost:3001 | Dashboards and trace exploration |
-| Prometheus | http://localhost:9090 | Metrics database and PromQL |
-| Tempo | http://localhost:3200 | Trace storage/query backend |
-| OpenTelemetry Collector health | http://localhost:13133 | Collector health check |
-| OpenTelemetry Collector zPages | http://localhost:55679/debug/tracez | Collector trace debugging |
-
-Grafana login for local development:
-
-```text
-admin / admin
-```
-
-### Verify observability locally
-
-Start or refresh the stack:
+Start or refresh the Aspire AppHost:
 
 ```bash
-docker compose up -d --build
+./start-aspire.sh
 ```
 
-Check the services are running:
+Then open the Dashboard URL printed by Aspire. Keep the terminal running; stop
+the AppHost with `Ctrl+C`.
+
+Generate backend and Canton activity:
 
 ```bash
-docker compose ps
+export BACKEND_URL=http://127.0.0.1:<backend-port>
+
+for i in $(seq 1 20); do
+  curl -s "$BACKEND_URL/api/v1/health" >/dev/null
+  curl -s "$BACKEND_URL/api/v1/factory" >/dev/null
+done
 ```
 
-Expected observability containers:
+Expected result: Aspire shows `backend` spans and Canton spans from
+`sequencer1`, `mediator1`, `synchronizer`, and the participants. In the
+`Metrics` view, filter by `backend` and look for:
 
-```text
-otel-collector   Up X minutes
-prometheus       Up X minutes
-tempo            Up X minutes
-grafana          Up X minutes
-```
+- `http.server.request.count`
+- `http.server.request.duration`
 
-Check health endpoints:
+If traces are missing, check the Canton resource environment in Aspire. It
+should contain `canton.monitoring.tracing.tracer.exporter.address =
+"host.docker.internal"` and `canton.monitoring.tracing.tracer.exporter.port =
+4317`.
 
-```bash
-curl -i -s http://127.0.0.1:13133
-curl -i -s http://127.0.0.1:9090/-/ready
-curl -i -s http://127.0.0.1:3200/ready
-curl -i -s http://127.0.0.1:3001/api/health
-```
-
-Expected result: all four commands return HTTP `200`.
-
-If Tempo returns HTTP `503` with `Ingester not ready: waiting for 15s after
-being ready`, wait 15-30 seconds and run the `/ready` check again. That is a
-normal Tempo warm-up window immediately after container startup.
-
-Check that Canton metrics reach Prometheus:
-
-```bash
-curl -s -G --data-urlencode query=up http://127.0.0.1:9090/api/v1/query
-curl -s -G --data-urlencode query=scrape_samples_scraped http://127.0.0.1:9090/api/v1/query
-curl -s -G --data-urlencode query=daml_grpc_server_duration_seconds_count http://127.0.0.1:9090/api/v1/query
-```
-
-Expected result:
-
-- `up` contains `participant1:10013`, `participant2:10013`, `participant3:10013`, `sequencer1:10013`, and `mediator1:10013`.
-- `scrape_samples_scraped` shows non-zero sample counts for those Canton targets.
-- `daml_grpc_server_duration_seconds_count` returns Canton gRPC metrics with labels such as `component`, `node`, `service`, `grpc_method_name`, and `instance`.
-
-Check that Grafana was provisioned:
-
-```bash
-curl -s -u admin:admin http://127.0.0.1:3001/api/datasources
-curl -s -u admin:admin -G --data-urlencode query=Canton http://127.0.0.1:3001/api/search
-```
-
-Expected result:
-
-- Datasources include `Prometheus` and `Tempo`.
-- Search results include the `Canton Overview` dashboard.
-
-Generate a backend trace and confirm the Collector sees traces:
-
-```bash
-curl -s http://127.0.0.1:8080/api/v1/health
-docker compose logs --tail=100 otel-collector
-```
-
-Expected result: the Collector logs include `Traces` entries after backend/frontend activity.
-
-Open Grafana:
-
-```text
-http://localhost:3001/d/canton-overview/canton-overview
-```
-
-Use `Explore` with the `Tempo` datasource to inspect traces after calling backend endpoints.
+On Linux, if Canton containers cannot resolve `host.docker.internal`, set
+`ASPIRE_DASHBOARD_OTLP_CONTAINER_HOST` before running the AppHost to a host
+address reachable from the Docker bridge.
 
 ## Project Structure
 
 ```
 ├── README.md
-├── docker-compose.yml            # 8 services: sequencer, mediator, sync, 3 participants, backend, frontend
+├── docker-compose.yml            # Docker Compose fallback without Aspire observability
 ├── bond-contract/                # Bond token DAML contract (copy from canton-token-template)
 │   ├── daml.yaml
 │   └── daml/SimpleToken/
@@ -302,7 +236,10 @@ Use `Explore` with the `Tempo` datasource to inspect traces after calling backen
 
 ## API Endpoints
 
-The Go backend exposes a REST API at `http://localhost:8080/api/v1/`.
+The Go backend exposes a REST API at `/api/v1`. When running with Aspire, copy
+the `backend` endpoint from the Dashboard `Resources` view and use it as
+`BACKEND_URL`. In Docker Compose fallback mode, the default is
+`http://localhost:8080/api/v1/`.
 
 | Method | Path | Description |
 |---|---|---|
@@ -330,7 +267,7 @@ The Go backend exposes a REST API at `http://localhost:8080/api/v1/`.
 ### Mint a bond
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/mint \
+curl -X POST "$BACKEND_URL/api/v1/mint" \
   -H "Content-Type: application/json" \
   -d '{
     "admin": "admin",
@@ -345,13 +282,13 @@ curl -X POST http://localhost:8080/api/v1/mint \
 ### List holdings
 
 ```bash
-curl http://localhost:8080/api/v1/holdings?party=alice
+curl "$BACKEND_URL/api/v1/holdings?party=alice"
 ```
 
 ### Transfer a bond
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/transfer \
+curl -X POST "$BACKEND_URL/api/v1/transfer" \
   -H "Content-Type: application/json" \
   -d '{
     "sender": "alice",
@@ -363,7 +300,7 @@ curl -X POST http://localhost:8080/api/v1/transfer \
 ### Accept a transfer
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/transfer/accept \
+curl -X POST "$BACKEND_URL/api/v1/transfer/accept" \
   -H "Content-Type: application/json" \
   -d '{
     "party": "bob",
@@ -374,7 +311,7 @@ curl -X POST http://localhost:8080/api/v1/transfer/accept \
 ### Burn a bond
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/burn \
+curl -X POST "$BACKEND_URL/api/v1/burn" \
   -H "Content-Type: application/json" \
   -d '{
     "party": "alice",
@@ -385,7 +322,7 @@ curl -X POST http://localhost:8080/api/v1/burn \
 ### Create an allocation
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/allocations \
+curl -X POST "$BACKEND_URL/api/v1/allocations" \
   -H "Content-Type: application/json" \
   -d '{
     "sender": "alice",
@@ -402,7 +339,7 @@ curl -X POST http://localhost:8080/api/v1/allocations \
 ### Execute an allocation
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/allocations/execute \
+curl -X POST "$BACKEND_URL/api/v1/allocations/execute" \
   -H "Content-Type: application/json" \
   -d '{
     "party": "executor",
@@ -413,7 +350,7 @@ curl -X POST http://localhost:8080/api/v1/allocations/execute \
 ### Cancel an allocation
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/allocations/cancel \
+curl -X POST "$BACKEND_URL/api/v1/allocations/cancel" \
   -H "Content-Type: application/json" \
   -d '{
     "party": "executor",
@@ -424,7 +361,7 @@ curl -X POST http://localhost:8080/api/v1/allocations/cancel \
 ### Withdraw an allocation
 
 ```bash
-curl -X POST http://localhost:8080/api/v1/allocations/withdraw \
+curl -X POST "$BACKEND_URL/api/v1/allocations/withdraw" \
   -H "Content-Type: application/json" \
   -d '{
     "party": "alice",
@@ -434,7 +371,7 @@ curl -X POST http://localhost:8080/api/v1/allocations/withdraw \
 
 ## Frontend
 
-Open http://localhost:3000 in your browser.
+Open the `frontend` endpoint from the Aspire Dashboard.
 
 The frontend provides:
 - **Dashboard** — overview of all bonds and parties
@@ -458,10 +395,8 @@ Environment variables (Docker defaults in `docker-compose.yml`):
 - `LISTENER_EMIT_INITIAL` (default `false`)
 - `LISTENER_TEMPLATES` (comma-separated list; defaults to bond templates)
 
-To tail logs:
-```bash
-docker logs -f bond-listener
-```
+When running with Aspire, open the `listener` resource logs in the Dashboard.
+In Docker Compose fallback mode, use `docker logs -f bond-listener`.
 
 ### Verify the listener
 
@@ -472,8 +407,8 @@ docker ps --format "table {{.Names}}\t{{.Status}}"
 
 2) Generate events and watch logs:
 ```bash
-curl -s http://localhost:8080/api/v1/factory | jq .
-curl -X POST http://localhost:8080/api/v1/mint \
+curl -s "$BACKEND_URL/api/v1/factory" | jq .
+curl -X POST "$BACKEND_URL/api/v1/mint" \
   -H "Content-Type: application/json" \
   -d '{
     "admin": "admin",
@@ -497,6 +432,12 @@ The bond token contract implements the CIP-056 token standard with:
 - **SimpleAllocation** — DvP allocation supporting execute, cancel, and withdraw workflows
 
 ## Stopping
+
+```bash
+Ctrl+C
+```
+
+For Docker Compose fallback mode:
 
 ```bash
 docker compose down

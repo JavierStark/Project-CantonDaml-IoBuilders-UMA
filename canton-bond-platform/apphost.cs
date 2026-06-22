@@ -1,11 +1,17 @@
 ﻿#:package Aspire.Hosting.Go@13.4.2-preview.1.26303.6
 #:package Aspire.Hosting.JavaScript@13.4.2
-#:package Canton.Aspire.Hosting@1.0.6
+#:package Canton.Aspire.Hosting@1.0.10
 #:sdk Aspire.AppHost.Sdk@13.4.2
 
 using System.Diagnostics;
 using Aspire.Hosting.ApplicationModel;
 using Canton.Aspire.Hosting;
+
+var aspireDashboardOtlpEndpointUrl =
+    Environment.GetEnvironmentVariable("ASPIRE_DASHBOARD_OTLP_ENDPOINT_URL") ?? "http://localhost:18889";
+var aspireDashboardOtlpEndpoint = new Uri(aspireDashboardOtlpEndpointUrl);
+var aspireDashboardHostFromContainers =
+    Environment.GetEnvironmentVariable("ASPIRE_DASHBOARD_OTLP_CONTAINER_HOST") ?? "host.docker.internal";
 
 var builder = DistributedApplication.CreateBuilder(args);
 
@@ -82,27 +88,15 @@ static bool IsCommandAvailable(string cmd)
 
 // ---- Canton Infrastructure (using typed integration) ----
 
-var tempo = builder.AddTempo();
-var prometheus = builder.AddPrometheus();
-var otelCollector = builder.AddOpenTelemetryCollector()
-    .WaitFor(tempo)
-    .WaitFor(prometheus);
-var grafana = builder.AddGrafana()
-    .WaitFor(prometheus)
-    .WaitFor(tempo);
-
 var sequencer1 = builder.AddCantonSequencer("sequencer1")
-    .WithCantonOpenTelemetryTracing()
-    .WaitFor(otelCollector);
+    .WithCantonOpenTelemetryTracing(aspireDashboardHostFromContainers, aspireDashboardOtlpEndpoint.Port);
 var mediator1 = builder.AddCantonMediator("mediator1")
-    .WithCantonOpenTelemetryTracing()
-    .WaitFor(otelCollector);
+    .WithCantonOpenTelemetryTracing(aspireDashboardHostFromContainers, aspireDashboardOtlpEndpoint.Port);
 var synchronizer = builder.AddCantonSynchronizer("synchronizer")
     .WithRemoteSequencer(sequencer1)
     .WithRemoteMediator(mediator1);
 synchronizer = synchronizer
-    .WithCantonOpenTelemetryTracing()
-    .WaitFor(otelCollector);
+    .WithCantonOpenTelemetryTracing(aspireDashboardHostFromContainers, aspireDashboardOtlpEndpoint.Port);
 
 var participantConfigs = new[]
 {
@@ -120,8 +114,7 @@ foreach (var cfg in participantConfigs)
         .WithLedgerPort(cfg.LedgerPort)
         .WithHttpPort(cfg.HttpPort)
         .WithBootstrapScript(cfg.Bootstrap)
-        .WithCantonOpenTelemetryTracing()
-        .WaitFor(otelCollector)
+        .WithCantonOpenTelemetryTracing(aspireDashboardHostFromContainers, aspireDashboardOtlpEndpoint.Port)
         .WaitFor(synchronizer);
 
     participants.Add(participant);
@@ -144,10 +137,9 @@ var backend = builder.AddGoApp("backend", "./backend")
     .WithEnvironment("PARTICIPANT3_URL", "http://localhost:5033")
     .WithEnvironment("PARTICIPANT3_GRPC_URL", "localhost:5031")
     .WithEnvironment("PARTICIPANT3_PARTIES", "charlie")
-    .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
-    .WithEnvironment("OTEL_EXPORTER_OTLP_INSECURE", "true")
+    .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", aspireDashboardOtlpEndpointUrl)
+    .WithEnvironment("OTEL_EXPORTER_OTLP_PROTOCOL", "grpc")
     .WithEnvironment("OTEL_SERVICE_NAME", "backend")
-    .WaitFor(otelCollector)
     ;
 
 foreach (var p in participants)
