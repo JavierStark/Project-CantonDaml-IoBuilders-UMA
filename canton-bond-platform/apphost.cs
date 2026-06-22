@@ -1,6 +1,6 @@
 ﻿#:package Aspire.Hosting.Go@13.4.2-preview.1.26303.6
 #:package Aspire.Hosting.JavaScript@13.4.2
-#:package Canton.Aspire.Hosting@1.0.6
+#:package Canton.Aspire.Hosting@1.0.7
 #:sdk Aspire.AppHost.Sdk@13.4.2
 
 using System.Diagnostics;
@@ -82,27 +82,17 @@ static bool IsCommandAvailable(string cmd)
 
 // ---- Canton Infrastructure (using typed integration) ----
 
-var tempo = builder.AddTempo();
-var prometheus = builder.AddPrometheus();
-var otelCollector = builder.AddOpenTelemetryCollector()
-    .WaitFor(tempo)
-    .WaitFor(prometheus);
-var grafana = builder.AddGrafana()
-    .WaitFor(prometheus)
-    .WaitFor(tempo);
+var otelCollector = builder.AddOpenTelemetryCollector();
 
 var sequencer1 = builder.AddCantonSequencer("sequencer1")
-    .WithCantonOpenTelemetryTracing()
-    .WaitFor(otelCollector);
+    .WithCantonOpenTelemetry();
 var mediator1 = builder.AddCantonMediator("mediator1")
-    .WithCantonOpenTelemetryTracing()
-    .WaitFor(otelCollector);
+    .WithCantonOpenTelemetry();
 var synchronizer = builder.AddCantonSynchronizer("synchronizer")
     .WithRemoteSequencer(sequencer1)
     .WithRemoteMediator(mediator1);
 synchronizer = synchronizer
-    .WithCantonOpenTelemetryTracing()
-    .WaitFor(otelCollector);
+    .WithCantonOpenTelemetry();
 
 var participantConfigs = new[]
 {
@@ -120,8 +110,7 @@ foreach (var cfg in participantConfigs)
         .WithLedgerPort(cfg.LedgerPort)
         .WithHttpPort(cfg.HttpPort)
         .WithBootstrapScript(cfg.Bootstrap)
-        .WithCantonOpenTelemetryTracing()
-        .WaitFor(otelCollector)
+        .WithCantonOpenTelemetry()
         .WaitFor(synchronizer);
 
     participants.Add(participant);
@@ -143,12 +132,7 @@ var backend = builder.AddGoApp("backend", "./backend")
     .WithEnvironment("PARTICIPANT2_PARTIES", "bob")
     .WithEnvironment("PARTICIPANT3_URL", "http://localhost:5033")
     .WithEnvironment("PARTICIPANT3_GRPC_URL", "localhost:5031")
-    .WithEnvironment("PARTICIPANT3_PARTIES", "charlie")
-    .WithEnvironment("OTEL_EXPORTER_OTLP_ENDPOINT", "http://localhost:4317")
-    .WithEnvironment("OTEL_EXPORTER_OTLP_INSECURE", "true")
-    .WithEnvironment("OTEL_SERVICE_NAME", "backend")
-    .WaitFor(otelCollector)
-    ;
+    .WithEnvironment("PARTICIPANT3_PARTIES", "charlie");
 
 foreach (var p in participants)
     backend = backend.WaitFor(p);

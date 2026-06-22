@@ -23,14 +23,14 @@ processors:
   batch:
 
 exporters:
-  debug:
-    verbosity: basic
-  prometheusremotewrite:
-    endpoint: http://prometheus:9090/api/v1/write
-  otlp/tempo:
-    endpoint: tempo:4317
+  otlp/aspire:
+    endpoint: ${env:OTEL_EXPORTER_OTLP_ENDPOINT}
+    headers:
+      x-otlp-api-key: ${env:ASPIRE_API_KEY}
     tls:
       insecure: true
+  debug:
+    verbosity: detailed
 
 extensions:
   health_check:
@@ -44,8 +44,8 @@ service:
     metrics:
       receivers: [prometheus]
       processors: [batch]
-      exporters: [debug, prometheusremotewrite]
+      exporters: [debug, otlp/aspire]
     traces:
       receivers: [otlp]
       processors: [batch]
-      exporters: [debug, otlp/tempo]
+      exporters: [debug, otlp/aspire]
