@@ -72,6 +72,14 @@
                         <select id="mintOwner" required data-testid="mintOwner"></select>
                     </div>
                     <div class="form-row">
+                        <label>Instrument</label>
+                        <select id="mintInstrument" required data-testid="mintInstrument">
+                            <option value="BOND">BOND</option>
+                            <option value="EUR">EUR</option>
+                            <option value="CASH">CASH</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
                         <label>Amount</label>
                         <input type="number" id="mintAmount" step="0.01" min="0.01" required data-testid="mintAmount">
                     </div>
@@ -127,6 +135,14 @@
                         <select id="transferReceiver" required data-testid="transferReceiver"></select>
                     </div>
                     <div class="form-row">
+                        <label>Instrument</label>
+                        <select id="transferInstrument" required data-testid="transferInstrument">
+                            <option value="BOND">BOND</option>
+                            <option value="EUR">EUR</option>
+                            <option value="CASH">CASH</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
                         <label>Amount</label>
                         <input type="number" id="transferAmount" step="0.01" min="0.01" required data-testid="transferAmount">
                     </div>
@@ -173,6 +189,14 @@
                     <div class="form-row">
                         <label>Executor</label>
                         <select id="allocationExecutor" required data-testid="allocationExecutor"></select>
+                    </div>
+                    <div class="form-row">
+                        <label>Instrument</label>
+                        <select id="allocationInstrument" required data-testid="allocationInstrument">
+                            <option value="BOND">BOND</option>
+                            <option value="EUR">EUR</option>
+                            <option value="CASH">CASH</option>
+                        </select>
                     </div>
                     <div class="form-row">
                         <label>Amount</label>

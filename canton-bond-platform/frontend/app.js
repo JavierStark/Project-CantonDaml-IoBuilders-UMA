@@ -34,6 +34,20 @@ function hideResult(el) {
     el.className = 'result';
 }
 
+function requireFactoryReady(resultEl) {
+    if (!factoryReady) {
+        showResult(resultEl, "Factory is not ready yet.", true);
+        return false;
+    }
+    return true;
+}
+
+function toISOStringFromLocal(localDateTime) {
+    if (!localDateTime) return '';
+    const date = new Date(localDateTime);
+    return date.toISOString();
+}
+
 function setFactoryLocked(locked, message) {
     factoryReady = !locked;
     document.body.classList.toggle('factory-locked', locked);
@@ -112,7 +126,7 @@ async function loadDashboard() {
                             existing.observedViaParticipants.push(p.participant);
                         }
                     }
-                } catch (_) {}
+                } catch (_) { }
             }
         }
         holdings = Array.from(byContract.values());
@@ -153,7 +167,7 @@ async function loadHoldings() {
                         existing.observedViaParticipants.push(p.participant);
                     }
                 }
-            } catch (_) {}
+            } catch (_) { }
         }
         holdings = Array.from(byContract.values());
         renderHoldingsTable('holdingsList', holdings, false, true);
@@ -328,14 +342,14 @@ function renderAllocationsTable(data) {
         <td>${receiver}</td>
         <td>${executor}</td>
         <td>${a.amount}</td>
-        <td>${a.instrumentId || '-'}</td>
-        <td>${a.allocateBefore || '-'}</td>
-        <td>${a.settleBefore || '-'}</td>
-        <td style="font-size:0.75rem;max-width:200px;overflow:hidden;text-overflow:ellipsis">${a.contractId}</td>
+        <td title="${a.instrumentId || '-'}">${(a.instrumentId || '-').split(':').pop()}</td>
+        <td>${a.allocateBefore ? a.allocateBefore.replace('T', ' ').substring(0, 16) : '-'}</td>
+        <td>${a.settleBefore ? a.settleBefore.replace('T', ' ').substring(0, 16) : '-'}</td>
+        <td style="font-size:0.75rem;max-width:120px;overflow:hidden;text-overflow:ellipsis" title="${a.contractId}">${a.contractId.substring(0, 12)}…</td>
         <td>
-        <button class="btn-small btn-success" onclick="executeAllocation('${a.contractId}', '${executor}')">Execute</button>
-        <button class="btn-small btn-danger" onclick="cancelAllocation('${a.contractId}', '${executor}')">Cancel</button>
-        <button class="btn-small" onclick="withdrawAllocation('${a.contractId}', '${sender}')">Withdraw</button>
+        <button class="btn-small btn-success" data-action="execute-allocation" data-cid="${a.contractId}" data-party="${executor}">Execute</button>
+        <button class="btn-small btn-danger" data-action="cancel-allocation" data-cid="${a.contractId}" data-party="${executor}">Cancel</button>
+        <button class="btn-small" data-action="withdraw-allocation" data-cid="${a.contractId}" data-party="${sender}">Withdraw</button>
         </td>
         </tr>`;
     }
@@ -463,6 +477,21 @@ document.addEventListener('click', e => {
                 withdrawTransfer(cid, party);
             }
             break;
+        case 'execute-allocation':
+            if (confirm('Execute this allocation? This will settle the transfer.')) {
+                executeAllocation(cid, party);
+            }
+            break;
+        case 'cancel-allocation':
+            if (confirm('Cancel this allocation?')) {
+                cancelAllocation(cid, party);
+            }
+            break;
+        case 'withdraw-allocation':
+            if (confirm('Withdraw this allocation? Your holdings will be returned.')) {
+                withdrawAllocation(cid, party);
+            }
+            break;
     }
 });
 
@@ -484,6 +513,7 @@ $('mintForm').addEventListener('submit', async e => {
                 couponRate: parseFloat($('mintCoupon').value),
                 maturityDate: $('mintMaturity').value,
                 description: $('mintDescription').value,
+                instrumentId: $('mintInstrument').value,
             },
         });
         showResult(result, `Bond minted! Offset: ${data.offset}`);
@@ -508,6 +538,7 @@ $('transferForm').addEventListener('submit', async e => {
                 sender: $('transferSender').value,
                 receiver: $('transferReceiver').value,
                 amount: parseFloat($('transferAmount').value),
+                instrumentId: $('transferInstrument').value,
             },
         });
         showResult(result, `Transfer initiated! Status: ${data.status}`);
@@ -520,7 +551,6 @@ $('transferForm').addEventListener('submit', async e => {
 });
 
 async function acceptTransfer(cid, party) {
-    if (!confirm('Accept this transfer?')) return;
     try {
         const data = await api('/transfer/accept', {
             method: 'POST',
@@ -535,7 +565,6 @@ async function acceptTransfer(cid, party) {
 }
 
 async function rejectTransfer(cid, party) {
-    if (!confirm('Reject this transfer?')) return;
     try {
         await api('/transfer/reject', {
             method: 'POST',
@@ -550,7 +579,6 @@ async function rejectTransfer(cid, party) {
 }
 
 async function withdrawTransfer(cid, party) {
-    if (!confirm('Withdraw this transfer?')) return;
     try {
         await api('/transfer/withdraw', {
             method: 'POST',
@@ -597,6 +625,21 @@ $('allocationForm').addEventListener('submit', async e => {
     if (!requireFactoryReady(result)) return;
     btn.disabled = true;
     try {
+        const allocateBeforeStr = $('allocationAllocateBefore').value;
+        const settleBeforeStr = $('allocationSettleBefore').value;
+
+        if (new Date(allocateBeforeStr) <= new Date()) {
+            showResult(result, "Allocate Before date must be in the future.", true);
+            btn.disabled = false;
+            return;
+        }
+
+        if (new Date(allocateBeforeStr) > new Date(settleBeforeStr)) {
+            showResult(result, "Allocate Before date must be <= Settle Before date.", true);
+            btn.disabled = false;
+            return;
+        }
+
         const data = await api('/allocations', {
             method: 'POST',
             body: {
@@ -604,10 +647,11 @@ $('allocationForm').addEventListener('submit', async e => {
                 receiver: $('allocationReceiver').value,
                 executor: $('allocationExecutor').value,
                 amount: parseFloat($('allocationAmount').value),
-                allocateBefore: toISOStringFromLocal($('allocationAllocateBefore').value),
-                settleBefore: toISOStringFromLocal($('allocationSettleBefore').value),
+                allocateBefore: toISOStringFromLocal(allocateBeforeStr),
+                settleBefore: toISOStringFromLocal(settleBeforeStr),
                 settlementRef: $('allocationSettlementRef').value.trim(),
                 transferLegId: $('allocationTransferLegId').value.trim(),
+                instrumentId: $('allocationInstrument').value,
             },
         });
         showResult(result, `Allocation created! Offset: ${data.offset}`);
@@ -621,13 +665,12 @@ $('allocationForm').addEventListener('submit', async e => {
 
 // Allocation actions
 async function executeAllocation(cid, party) {
-    if (!confirm('Execute this allocation?')) return;
     try {
         await api('/allocations/execute', {
             method: 'POST',
             body: { party, contractId: cid },
         });
-        alert('Allocation executed!');
+        alert('Allocation executed! Bonds transferred to receiver.');
         loadAllocations();
         loadDashboard();
     } catch (err) {
@@ -636,13 +679,12 @@ async function executeAllocation(cid, party) {
 }
 
 async function cancelAllocation(cid, party) {
-    if (!confirm('Cancel this allocation?')) return;
     try {
         await api('/allocations/cancel', {
             method: 'POST',
             body: { party, contractId: cid },
         });
-        alert('Allocation canceled!');
+        alert('Allocation canceled! Holdings returned to sender.');
         loadAllocations();
         loadDashboard();
     } catch (err) {
@@ -651,13 +693,12 @@ async function cancelAllocation(cid, party) {
 }
 
 async function withdrawAllocation(cid, party) {
-    if (!confirm('Withdraw this allocation?')) return;
     try {
         await api('/allocations/withdraw', {
             method: 'POST',
             body: { party, contractId: cid },
         });
-        alert('Allocation withdrawn!');
+        alert('Allocation withdrawn! Holdings returned to sender.');
         loadAllocations();
         loadDashboard();
     } catch (err) {

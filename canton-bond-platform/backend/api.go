@@ -334,6 +334,7 @@ type mintRequest struct {
 	CouponRate   float64 `json:"couponRate"`
 	MaturityDate string  `json:"maturityDate"`
 	Description  string  `json:"description"`
+	InstrumentID string  `json:"instrumentId"`
 }
 
 func (s *Server) handleMint(c echo.Context) error {
@@ -393,9 +394,14 @@ func (s *Server) handleMint(c echo.Context) error {
 
 	factoryCID := events[0].ContractID
 
+	instID := req.InstrumentID
+	if instID == "" {
+		instID = "BOND"
+	}
+
 	choiceArg := map[string]any{
 		"owner":        ownerID,
-		"instrumentId": cantonledger.InstrumentID(adminID, "BOND"),
+		"instrumentId": cantonledger.InstrumentID(adminID, instID),
 		"amount":       cantonledger.DamlDecimal(req.Amount),
 		"couponRate":   cantonledger.DamlDecimal(req.CouponRate),
 		"maturityDate": req.MaturityDate,
@@ -430,10 +436,11 @@ func (s *Server) handleMint(c echo.Context) error {
 }
 
 type transferRequest struct {
-	Sender      string   `json:"sender"`
-	Receiver    string   `json:"receiver"`
-	Amount      float64  `json:"amount"`
-	HoldingCids []string `json:"holdingCids"`
+	Sender       string   `json:"sender"`
+	Receiver     string   `json:"receiver"`
+	Amount       float64  `json:"amount"`
+	HoldingCids  []string `json:"holdingCids"`
+	InstrumentID string   `json:"instrumentId"`
 }
 
 func (s *Server) handleTransfer(c echo.Context) error {
@@ -506,6 +513,11 @@ func (s *Server) handleTransfer(c echo.Context) error {
 	var inputCIDs []string
 	remaining := req.Amount
 
+	instID := req.InstrumentID
+	if instID == "" {
+		instID = "BOND"
+	}
+
 	if len(req.HoldingCids) > 0 {
 		provided := make(map[string]bool, len(req.HoldingCids))
 		for _, cid := range req.HoldingCids {
@@ -525,6 +537,15 @@ func (s *Server) handleTransfer(c echo.Context) error {
 			if evt.IsLocked() {
 				continue
 			}
+
+			// Filter by instrumentId
+			instRaw, _ := evt.GetField("instrumentId")
+			if instMap, ok := instRaw.(map[string]any); ok {
+				if idStr, ok := instMap["id"].(string); ok && idStr != instID {
+					continue
+				}
+			}
+
 			amt := evt.GetDecimalField("amount")
 			if amt <= 0 {
 				continue
@@ -544,6 +565,15 @@ func (s *Server) handleTransfer(c echo.Context) error {
 			if evt.IsLocked() {
 				continue
 			}
+
+			// Filter by instrumentId
+			instRaw, _ := evt.GetField("instrumentId")
+			if instMap, ok := instRaw.(map[string]any); ok {
+				if idStr, ok := instMap["id"].(string); ok && idStr != instID {
+					continue
+				}
+			}
+
 			amt := evt.GetDecimalField("amount")
 			if amt <= 0 {
 				continue
@@ -554,7 +584,7 @@ func (s *Server) handleTransfer(c echo.Context) error {
 	}
 
 	if remaining > 0 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("insufficient holdings: need %.2f more", remaining)})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("insufficient %s holdings: need %.2f more", instID, remaining)})
 	}
 
 	factoryAdmin := factoryEvents[0].GetStringField("admin")
@@ -563,7 +593,7 @@ func (s *Server) handleTransfer(c echo.Context) error {
 		"sender":           senderID,
 		"receiver":         receiverID,
 		"amount":           cantonledger.DamlDecimal(req.Amount),
-		"instrumentId":     cantonledger.InstrumentID(factoryAdmin, "BOND"),
+		"instrumentId":     cantonledger.InstrumentID(factoryAdmin, instID),
 		"requestedAt":      time.Now().UTC().Format("2006-01-02T15:04:05.000000Z"),
 		"executeBefore":    time.Now().UTC().Add(24 * time.Hour).Format("2006-01-02T15:04:05.000000Z"),
 		"inputHoldingCids": inputCIDs,
@@ -588,7 +618,7 @@ func (s *Server) handleTransfer(c echo.Context) error {
 	// Submit to participant1 (factory's participant) so the factory contract
 	// is always resolvable. Admin is a controller of TransferFactory_Transfer
 	// and lives on participant1.
-	offset, err := factoryClient.SubmitCommand(ctx, cmdID, submitReq, []string{factoryAdmin})
+	offset, err := senderClient.SubmitCommand(ctx, cmdID, submitReq, []string{senderID})
 	if err != nil {
 		log.Printf("transfer error: %v", err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("transfer failed: %v", err)})
@@ -961,6 +991,7 @@ type allocationRequest struct {
 	SettleBefore   string  `json:"settleBefore"`
 	SettlementRef  string  `json:"settlementRef"`
 	TransferLegID  string  `json:"transferLegId"`
+	InstrumentID   string  `json:"instrumentId"`
 }
 
 func (s *Server) handleCreateAllocation(c echo.Context) error {
@@ -1041,6 +1072,11 @@ func (s *Server) handleCreateAllocation(c echo.Context) error {
 		cantonledger.TemplateLockedSimpleHolding,
 	)
 
+	instID := req.InstrumentID
+	if instID == "" {
+		instID = "BOND"
+	}
+
 	var inputCIDs []string
 	remaining := req.Amount
 	for _, evt := range holdingsEvents {
@@ -1054,6 +1090,15 @@ func (s *Server) handleCreateAllocation(c echo.Context) error {
 		if evt.IsLocked() {
 			continue
 		}
+
+		// Filter by instrumentId
+		instRaw, _ := evt.GetField("instrumentId")
+		if instMap, ok := instRaw.(map[string]any); ok {
+			if idStr, ok := instMap["id"].(string); ok && idStr != instID {
+				continue
+			}
+		}
+
 		amt := evt.GetDecimalField("amount")
 		if amt <= 0 {
 			continue
@@ -1063,7 +1108,7 @@ func (s *Server) handleCreateAllocation(c echo.Context) error {
 	}
 
 	if remaining > 0 {
-		return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("insufficient holdings: need %.2f more", remaining)})
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("insufficient %s holdings: need %.2f more", instID, remaining)})
 	}
 
 	settlementRef := strings.TrimSpace(req.SettlementRef)
@@ -1081,7 +1126,7 @@ func (s *Server) handleCreateAllocation(c echo.Context) error {
 			"sender":       senderID,
 			"receiver":     receiverID,
 			"amount":       cantonledger.DamlDecimal(req.Amount),
-			"instrumentId": cantonledger.InstrumentID(factoryAdmin, "BOND"),
+			"instrumentId": cantonledger.InstrumentID(factoryAdmin, instID),
 			"meta": map[string]any{
 				"values": map[string]any{},
 			},
@@ -1120,10 +1165,9 @@ func (s *Server) handleCreateAllocation(c echo.Context) error {
 		},
 	}
 
-	// Submit to participant1 (factory's participant) so the factory contract
-	// is always resolvable. Admin is a controller of AllocationFactory_Allocate
-	// and lives on participant1.
-	offset, err := factoryClient.SubmitCommand(ctx, cmdID, submitReq, []string{factoryAdmin})
+	// Submit via senderClient using only senderID in actAs.
+	// The factory contract inherently provides admin authorization.
+	offset, err := senderClient.SubmitCommand(ctx, cmdID, submitReq, []string{senderID})
 	if err != nil {
 		log.Printf("allocation error: %v", err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("allocation failed: %v", err)})
@@ -1178,6 +1222,8 @@ func (s *Server) handleAllocationAction(c echo.Context, choice, action string) e
 		return c.JSON(http.StatusNotFound, map[string]string{"error": "party not found"})
 	}
 
+	actAs := []string{partyID}
+
 	cmdID := newCommandID("allocation-" + action)
 	submitReq := cantonledger.Command{
 		ExerciseCommand: &cantonledger.ExerciseCommand{
@@ -1190,7 +1236,7 @@ func (s *Server) handleAllocationAction(c echo.Context, choice, action string) e
 		},
 	}
 
-	offset, err := client.SubmitCommand(ctx, cmdID, submitReq, []string{partyID})
+	offset, err := client.SubmitCommand(ctx, cmdID, submitReq, actAs)
 	if err != nil {
 		log.Printf("allocation %s error: %v", action, err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("%s failed: %v", action, err)})
@@ -1262,7 +1308,7 @@ func (s *Server) handleFactory(c echo.Context) error {
 
 		createArgs := map[string]any{
 			"admin":                adminID,
-			"supportedInstruments": []string{"BOND"},
+			"supportedInstruments": []string{"BOND", "EUR", "CASH"},
 			"observers":            observerIDs,
 		}
 
@@ -1284,7 +1330,7 @@ func (s *Server) handleFactory(c echo.Context) error {
 			"status":      "created",
 			"offset":      offset,
 			"admin":       adminID,
-			"instruments": []string{"BOND"},
+			"instruments": []string{"BOND", "EUR", "CASH"},
 		})
 	}
 

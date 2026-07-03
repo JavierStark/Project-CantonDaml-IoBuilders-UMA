@@ -73,7 +73,7 @@ log_info "Waiting for all services to be ready..."
 
 MAX_RETRIES=40
 RETRY_INTERVAL=5
-SERVICES=("sequencer1" "mediator1" "synchronizer" "participant1" "participant2" "participant3" "bond-backend" "bond-frontend")
+SERVICES=("sequencer1" "mediator1" "synchronizer" "participant1" "participant2" "participant3" "bond-backend")
 
 for service in "${SERVICES[@]}"; do
     log_info "Waiting for $service..."
