@@ -73,7 +73,7 @@ log_info "Waiting for all services to be ready..."
 
 MAX_RETRIES=40
 RETRY_INTERVAL=5
-SERVICES=("sequencer1" "mediator1" "synchronizer" "participant1" "participant2" "participant3" "bond-backend")
+SERVICES=("sequencer1" "mediator1" "synchronizer" "participant1" "participant2" "participant3" "bond-backend" "bond-frontend")
 
 for service in "${SERVICES[@]}"; do
     log_info "Waiting for $service..."
@@ -177,6 +177,24 @@ check_endpoint "List parties"  GET  "http://localhost:8080/api/v1/parties" ""
 check_endpoint "Mint bond"     POST "http://localhost:8080/api/v1/mint" \
     '{"admin":"admin","owner":"alice","amount":1000,"couponRate":5.0,"maturityDate":"2028-12-31","description":"Corporate Bond A"}'
 check_endpoint "Holdings for alice"  GET "http://localhost:8080/api/v1/holdings?party=alice" ""
+
+# ---------------------------------------------------------------
+# 8. Wait for frontend
+# ---------------------------------------------------------------
+log_info "Waiting for frontend..."
+MAX_FRONTEND_RETRIES=15
+retries=0
+while [ $retries -lt $MAX_FRONTEND_RETRIES ]; do
+    if curl -sf http://localhost:3000 >/dev/null 2>&1; then
+        log_ok "Frontend is responding"
+        break
+    fi
+    sleep 2
+    retries=$((retries + 1))
+done
+if [ $retries -ge $MAX_FRONTEND_RETRIES ]; then
+    log_warn "Frontend not responding after 30s — check logs: docker logs bond-frontend"
+fi
 
 # ---------------------------------------------------------------
 # Done
