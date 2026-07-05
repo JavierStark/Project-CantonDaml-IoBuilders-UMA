@@ -3,10 +3,10 @@
 ## Architecture
 
 ```
-Canton Ledger (participant1:5011)
+Canton Ledger (participant1 gRPC :5011)
     │ gRPC UpdateService.GetUpdates stream
     ▼
-Listener (Go, port 8081) — bridges gRPC events → WebSocket JSON
+Listener (Go, port 8081, container: bond-listener) — bridges gRPC events → WebSocket JSON
     │ ws://hostname:8081/ws/bonds
     ▼
 Frontend (Vite, port 3000) — `app.js` consumes events
@@ -40,11 +40,13 @@ Messages are JSON with `templateId` and `action` fields. Based on template:
 
 ## Backend Listener: `listener/main.go`
 
+- **Docker**: Runs in `bond-listener` container (Dockerfile at `listener/Dockerfile`), exposed on port 8081
 - **Go standard library** + `gorilla/websocket`
-- **gRPC stream** from `participant1:5011` subscribes to **all** template events (wildcard filter)
+- **gRPC stream** from `participant1:5011` via `UpdateService.GetUpdates` — subscribes to **all** template events (wildcard filter)
 - Each received gRPC event is broadcast via `conn.WriteJSON()` to **all connected WebSocket clients**
 - Client disconnect detected via read loop (`conn.ReadMessage()` returns error)
 - Broadcaster holds a `map[*websocket.Conn]bool` protected by a `sync.Mutex`
+- On startup, resolves admin party from participant1 and opens gRPC stream
 
 ## Key Observations
 

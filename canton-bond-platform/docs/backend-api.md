@@ -21,15 +21,17 @@ Frontend (SPA)         Backend (Go)            Canton Ledger
                                                 └─────────────────┘
 ```
 
-The backend runs as a Go HTTP server that translates REST calls into Canton JSON API V2 requests. It manages connections to 3 Canton participants (each hosting different parties) and provides a unified REST API consumed by the frontend SPA.
+The backend runs as a Go HTTP server that translates REST calls into Canton Ledger API requests. It manages connections to 3 Canton participants (each hosting different parties) and provides a unified REST API consumed by the frontend SPA.
+
+**Transport modes**: By default, the backend uses gRPC for read operations (`GetLedgerEnd`, `GetActiveContracts`) and the HTTP JSON API v2 for writes (`submit-and-wait`) and party management. Set `LEDGER_TRANSPORT=http` to fall back to full HTTP JSON API v2 mode.
 
 ### Participant Layout
 
-| Participant | Parties | Port |
-|-------------|---------|------|
-| participant1 | admin, alice, executor | 5013 |
-| participant2 | bob | 5023 |
-| participant3 | charlie | 5033 |
+| Participant | Parties | HTTP Port | gRPC Port |
+|-------------|---------|-----------|-----------|
+| participant1 | admin, alice, executor | 5013 | 5011 |
+| participant2 | bob | 5023 | 5021 |
+| participant3 | charlie | 5033 | 5031 |
 
 ### Daml Contract Templates
 
@@ -67,8 +69,8 @@ The backend runs as a Go HTTP server that translates REST calls into Canton JSON
 **Frontend usage**: Not called directly; the equivalent check is done by `POST /api/v1/factory` during startup.
 
 **Backend logic**:
-1. Calls `GET /v2/state/ledger-end` on participant1
-2. Calls `POST /v2/state/active-contracts` with template `SimpleTokenRules`
+1. Calls `StateService.GetLedgerEnd` (gRPC) or `GET /v2/state/ledger-end` (HTTP) on participant1
+2. Calls `StateService.GetActiveContracts` (gRPC) or `POST /v2/state/active-contracts` (HTTP) with template `SimpleTokenRules`
 3. If found → returns contract ID, template ID, admin, instruments
 4. If NOT found → delegates to **POST** logic and creates the factory
 
@@ -91,17 +93,16 @@ The backend runs as a Go HTTP server that translates REST calls into Canton JSON
 **Frontend usage**: Called by the "Start Factory" button (`#startFactoryBtn`) on the dashboard. The button has retry logic with exponential backoff (up to 5 attempts, 2s/4s/8s/10s/10s delays).
 
 **Backend logic**:
-1. Calls `GET /v2/state/ledger-end` on participant1
-2. Calls `POST /v2/state/active-contracts` for `SimpleTokenRules`
-3. If not found:
+1. Calls `LedgerEnd` + `ActiveContracts` (gRPC reads) for `SimpleTokenRules`
+2. If not found:
    a. Retries looking up the `admin` party (up to 10 attempts × 3s) — handles bootstrap race
    b. Queries ALL participants for their local party lists
    c. Collects all party IDs as `observers` (excluding admin)
-   d. Calls `POST /v2/commands/submit-and-wait` on participant1:
+   d. Calls `POST /v2/commands/submit-and-wait` on participant1 (HTTP JSON API):
       - **Command**: `CreateCommand` with template `SimpleTokenRules`
       - **CreateArguments**: `{admin, supportedInstruments: ["BOND"], observers: [...]}`
       - **actAs**: `[adminID]`
-4. If found: returns existing factory data
+3. If found: returns existing factory data
 
 **Daml contract affected**:
 ```
@@ -577,23 +578,37 @@ transferFactory_transferImpl
 
 ---
 
-## Canton JSON API V2 — Low-Level Interaction Details
+## Canton Ledger API — Low-Level Interaction Details
 
-All Daml interactions go through the `ledger.Client` in `backend/internal/ledger/client.go`, which wraps the Canton JSON API V2 REST endpoints:
+All Daml interactions go through the `cantonledger` package in `pkg/cantonledger/`, which implements the `LedgerClient` interface. Two implementations exist:
 
-### Endpoints Used
+### gRPC mode (`LEDGER_TRANSPORT=grpc`, default)
 
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/v2/state/ledger-end` | GET | Get current ledger offset |
-| `/v2/state/active-contracts` | POST | Query active contracts by template |
-| `/v2/commands/submit-and-wait` | POST | Submit a command and wait for completion |
-| `/v2/parties` | GET | List parties on a participant |
-| `/v2/parties` | POST | Allocate a new party |
+Uses `pkg/cantonledger/grpc_client.go`:
 
-### Command Structure
+| Operation | Transport | Endpoint |
+|-----------|-----------|----------|
+| `LedgerEnd` | gRPC (native) | `StateService.GetLedgerEnd` |
+| `ActiveContracts` | gRPC (native) | `StateService.GetActiveContracts` (streaming) |
+| `Parties` | HTTP JSON API | `GET /v2/parties` |
+| `AllocateParty` | HTTP JSON API | `POST /v2/parties` |
+| `SubmitCommand` | HTTP JSON API | `POST /v2/commands/submit-and-wait` |
 
-All commands use `submit-and-wait` with:
+### HTTP mode (`LEDGER_TRANSPORT=http`, fallback)
+
+Uses `pkg/cantonledger/client.go`:
+
+| Operation | Transport | Endpoint |
+|-----------|-----------|----------|
+| `LedgerEnd` | HTTP JSON API | `GET /v2/state/ledger-end` |
+| `ActiveContracts` | HTTP JSON API | `POST /v2/state/active-contracts` |
+| `Parties` | HTTP JSON API | `GET /v2/parties` |
+| `AllocateParty` | HTTP JSON API | `POST /v2/parties` |
+| `SubmitCommand` | HTTP JSON API | `POST /v2/commands/submit-and-wait` |
+
+### Command Structure (HTTP JSON API v2)
+
+All write commands use `submit-and-wait` with:
 ```json
 {
   "commands": [
@@ -616,6 +631,17 @@ The interface template IDs are package hash-prefixed (e.g., `55ba4deb...:Splice.
 
 ### Client Routing
 
-The backend maintains one `Client` per participant (configured via `PARTICIPANT{1,2,3}_URL` env vars). The `clientForParty()` function resolves a party to its host participant:
+The backend maintains one `LedgerClient` per participant (configured via `PARTICIPANT{1,2,3}_URL` and `PARTICIPANT{1,2,3}_GRPC_URL` env vars). The `clientForParty()` function resolves a party to its host participant:
 1. Check the static config mapping (e.g., `bob` → `participant2`)
 2. Fallback: query all participants' party lists and match by short name, full ID, or display name
+
+### Relevant Source Files
+
+- `backend/api.go` — HTTP handlers, choice-building, actAs logic
+- `backend/config.go` — Environment-based configuration
+- `pkg/cantonledger/interface.go` — `LedgerClient` interface
+- `pkg/cantonledger/grpc_client.go` — gRPC client (default transport)
+- `pkg/cantonledger/client.go` — HTTP JSON API v2 client (fallback)
+- `pkg/cantonledger/commands.go` — Command building + `submit-and-wait`
+- `pkg/cantonledger/events.go` — CreatedEvent parsing from ActiveContracts
+- `pkg/cantonledger/templates.go` — Template and choice ID constants

@@ -1,219 +1,195 @@
 # Canton Bond Platform
 
-A Dockerized Canton network with a bond token contract, Go backend API, and web frontend.
+A Dockerized Canton network with a bond token contract, Go backend API, web frontend, and real-time WebSocket listener.
 
 ## Architecture
 
 ```
-                    ┌──────────────────┐
-                    │   synchronizer   │
-                    └────────┬─────────┘
-                             │
-            ┌────────────────┼──────────────────────────────────┐
-            │                │                                  │
-    ┌───────▼──────┐  ┌─────▼──────┐  ┌──────▼──────────┐
-    │  sequencer1   │  │ mediator1  │  │  participant1   │  admin, alice, executor
-    │  public:5001  │  │ admin:5202 │  │  http-json:5013 │
-    └───────────────┘  └────────────┘  └─────────────────┘
-                                       ┌─────────────────┐
-                                       │  participant2   │  bob
-                                       │  http-json:5023 │
-                                       └─────────────────┘
-                                       ┌─────────────────┐
-                                       │  participant3   │  charlie
-                                       │  http-json:5033 │
-                                       └─────────────────┘
-                                              │
-                                    ┌─────────▼─────────┐
-                                    │   Go Backend :8080 │
-                                    └─────────┬─────────┘
-                                              │
-                                    ┌─────────▼─────────┐
-                                    │  Frontend :3000   │
-                                    └───────────────────┘
+                    ┌─────────────────────────┐
+                    │   Canton Domain "da"     │
+                    │  ┌─────────┐ ┌────────┐ │
+                    │  │sequencer│ │mediator│ │
+                    │  │  :5001  │ │ :5202  │ │
+                    │  └────┬────┘ └───┬────┘ │
+                    │       └────┬─────┘      │
+                    │   ┌────────▼──────┐     │
+                    │   │  synchronizer │     │
+                    │   └────────┬──────┘     │
+                    └────────────┼────────────┘
+                                 │
+        ┌────────────────────────┼────────────────────────────┐
+        │                        │                            │
+┌───────▼──────┐         ┌──────▼──────┐          ┌──────────▼──────┐
+│ participant1 │         │ participant2│          │  participant3   │
+│  admin,      │         │  bob        │          │  charlie        │
+│  alice,      │         │  gRPC: 5021 │          │  gRPC: 5031     │
+│  executor    │         │  HTTP: 5023 │          │  HTTP: 5033     │
+│  gRPC: 5011  │         └──────┬──────┘          └──────┬──────────┘
+│  HTTP: 5013  │                │                        │
+└──────┬───────┘                │                        │
+       │          ┌─────────────┼────────────────────────┘
+       │          │             │
+       │   ┌──────▼─────────────▼──────┐
+       │   │    Go Backend :8080       │──► REST API /api/v1
+       │   │  (gRPC + JSON API fallback)│
+       │   └─────────────┬─────────────┘
+       │                 │
+       │   ┌─────────────▼─────────────┐
+       │   │  Listener :8081           │──► WebSocket /ws/bonds
+       │   │  (gRPC stream → WS bridge)│
+       │   └───────────────────────────┘
+       │
+       └─── (gRPC:5011, HTTP:5013)
 ```
 
 ## Prerequisites
 
-- [Docker](https://docs.docker.com/engine/install/) + [Docker Compose](https://docs.docker.com/compose/install/)
+- [Docker](https://docs.docker.com/engine/install/) + Docker Compose
+- At least 6 GB RAM available for Docker
 - Pre-pulled Canton images: `europe-docker.pkg.dev/da-images/public/docker/canton-{base,sequencer,mediator,participant}:3.4.11`
-- [Daml SDK](https://docs.daml.com/) or `dpm` (to build the bond DAR)
 
 ## Quick Start
 
-### 1. Build the bond contract DAR
+```bash
+./start.sh
+```
+
+This single script:
+
+1. Checks that Docker and Docker Compose are installed
+2. Verifies the bond contract DAR exists (builds it with `dpm`/`daml` if missing)
+3. Builds all Docker images (backend, listener, frontend)
+4. Starts all 9 services: sequencer, mediator, synchronizer, 3 participants, backend, listener, frontend, OTEL collector
+5. Waits for all containers to be up and healthy
+6. Initializes the factory contract
+7. Verifies key API endpoints with a mint + holdings check
+
+Once complete, open http://localhost:3000 in your browser.
+
+### Manual setup (alternative)
+
+If you prefer to build and start manually:
 
 ```bash
-cd bond-contract && dpm build
-cp .daml/dist/simple-token-0.1.0.dar ../dars/
-cd ..
+# Build DAR
+cd bond-contract && dpm build && cp .daml/dist/simple-token-0.1.0.dar ../dars/ && cd ..
+
+# Start all services
+docker compose up -d --build
+
+# Wait for participants to be healthy, then initialize factory
+curl -s -X POST http://localhost:8080/api/v1/factory | jq .
 ```
 
-### 2. Start everything
+### Memory requirements
 
-```bash
-docker compose up -d
+Three Canton participants each run a JVM. On machines with limited RAM, the containers may be killed (exit code 137 = OOM). The `docker-compose.yml` already includes:
+
+```yaml
+participantN:
+  environment:
+    - JAVA_TOOL_OPTIONS=-Xmx768m
+  mem_limit: 1536m
 ```
 
-Wait for the Canton participants to finish bootstrap, then verify:
-
-```bash
-docker ps --format "table {{.Names}}\t{{.Status}}"
-```
-
-Expected output:
-```
-sequencer1         Up X minutes
-mediator1          Up X minutes
-synchronizer       Up X minutes
-participant1       Up X minutes (healthy)
-participant2       Up X minutes (healthy)
-participant3       Up X minutes (healthy)
-bond-backend       Up X minutes
-bond-frontend      Up X minutes
-bond-listener      Up X minutes
-otel-collector     Up X minutes
-```
-
-Do not call the ledger-backed API endpoints while the participants still show
-`health: starting`. On a clean in-memory startup, Canton may need 1-2 minutes to
-initialize identities, connect the synchronizer, expose the Ledger API gRPC
-ports, and create the parties.
-
-### 3. Initialize the factory contract
-
-The factory contract (SimpleTokenRules) is auto-created when first needed. Trigger it:
-
-```bash
-curl -s http://localhost:8080/api/v1/factory | jq .
-```
-
-Or open http://localhost:3000 in your browser and click around — the frontend will initialize everything.
-
-### 4. Verify gRPC transport
-
-The public REST API stays the same, but the backend uses the native Canton
-Ledger API gRPC by default.
-
-Check the backend logs:
-
-```bash
-docker compose logs backend
-```
-
-Expected lines:
-
-```text
-ledger transport: grpc
-participant participant1 -> participant1:5011 (grpc), fallback http http://participant1:5013
-participant participant2 -> participant2:5021 (grpc), fallback http http://participant2:5023
-participant participant3 -> participant3:5031 (grpc), fallback http http://participant3:5033
-```
-
-Check that the listener has resolved the `admin` party and opened the gRPC
-stream:
-
-```bash
-docker compose logs listener
-```
-
-Expected lines:
-
-```text
-¡ÉXITO! ID resuelto: admin -> admin::...
-Bond Listener Iniciado con gRPC
-Stream gRPC abierto. Esperando eventos para enviar a los WebSockets...
-```
-
-Then verify the REST endpoints:
-
-```bash
-curl -s http://localhost:8080/api/v1/health
-curl -s http://localhost:8080/api/v1/parties
-curl -s http://localhost:8080/api/v1/factory
-```
-
-If `/api/v1/parties` returns `[]` or `/api/v1/factory` returns
-`failed to query ledger end`, wait until all participants are healthy and the
-listener has resolved `admin`, then retry. See
-[`migracion_gRPC.md`](./migracion_gRPC.md) for the full gRPC verification flow,
-fallback mode, and troubleshooting.
+If participants still crash, try reducing to `-Xmx512m` / `mem_limit: 1024m` or increase Docker's memory allocation in Docker Desktop settings.
 
 ## Project Structure
 
 ```
 ├── README.md
-├── docker-compose.yml            # 7 services: sequencer, mediator, sync, 3 participants, backend, listener
-├── bond-contract/                # Bond token DAML contract (copy from canton-token-template)
+├── start.sh                       # One-command startup script
+├── docker-compose.yml             # 9 services: sequencer, mediator, sync, 3 participants,
+│                                  #   backend, listener, frontend, otel-collector
+├── bond-contract/                 # Bond token DAML contract
 │   ├── daml.yaml
 │   └── daml/SimpleToken/
-│       ├── Holding.daml          # SimpleHolding + LockedSimpleHolding
-│       ├── Rules.daml            # SimpleTokenRules factory (Mint, TransferFactory, AllocationFactory)
+│       ├── Holding.daml           # SimpleHolding + LockedSimpleHolding
+│       ├── Rules.daml             # SimpleTokenRules factory (Mint, Transfer, Allocation)
 │       ├── TransferInstruction.daml
 │       ├── Allocation.daml
 │       └── ContextUtils.daml
-├── dars/                         # Pre-built DAR files
-│   ├── splice-api-token-*.dar    # CIP-056 interface DARs (5 files)
-│   └── simple-token-0.1.0.dar   # Built bond contract DAR
-├── configs/                      # Canton bootstrap and collector configuration
-│   ├── shared-bootstrap.sc       # Shared init + DAR upload helpers
+├── dars/                          # Pre-built DAR files
+│   ├── splice-api-token-*.dar     # CIP-056 interface DARs (5 files)
+│   └── simple-token-0.1.0.dar    # Built bond contract DAR
+├── configs/                       # Canton bootstrap and collector configuration
+│   ├── shared-bootstrap.sc        # Shared init helpers (keys, topology, connectToSynchronizer)
 │   ├── sequencer-bootstrap.sc
 │   ├── mediator-bootstrap.sc
 │   ├── synchronizer-bootstrap.sc
 │   ├── synchronizer-remote.conf
-│   ├── participant1-bootstrap.sc # Init + DAR upload + parties (admin, alice, executor)
-│   ├── participant2-bootstrap.sc # Init + DAR upload + parties (bob)
-│   ├── participant3-bootstrap.sc # Init + DAR upload + parties (charlie)
-│   └── otel-collector.yaml       # OpenTelemetry collector config
-├── backend/                      # Go REST API server
+│   ├── participant1-bootstrap.sc  # Init + DAR upload + parties (admin, alice, executor)
+│   ├── participant2-bootstrap.sc  # Init + DAR upload + parties (bob)
+│   ├── participant3-bootstrap.sc  # Init + DAR upload + parties (charlie)
+│   └── otel-collector.yaml        # OpenTelemetry collector config
+├── backend/                       # Go REST API server
 │   ├── Dockerfile
-│   ├── go.mod
-│   ├── cmd/server/main.go
-│   └── internal/
-│       ├── config/config.go      # Environment-based configuration
-│       ├── ledger/client.go      # Canton JSON Ledger API v2 client
-│       └── api/
-│           ├── server.go         # Router, middleware, CORS
-│           └── handlers.go       # All API handlers
-└── frontend/                     # Static web frontend (Vite SPA, served via Aspire YARP proxy)
-    └── html/
-        ├── index.html            # SPA with all pages
-        ├── app.js                # API client + UI logic
-        └── style.css
+│   ├── go.mod / go.sum
+│   ├── main.go                    # Entrypoint + OTel init
+│   ├── api.go                     # All HTTP handlers + routing
+│   └── config.go                  # Environment-based config
+├── pkg/cantonledger/              # Shared Go package: Canton Ledger API client
+│   ├── interface.go               # LedgerClient interface
+│   ├── client.go                  # HTTP JSON API v2 client
+│   ├── grpc_client.go             # gRPC client (StateService reads + HTTP writes)
+│   ├── commands.go                # Command building + submit-and-wait
+│   ├── events.go                  # CreatedEvent parsing
+│   ├── templates.go               # Template/choice ID constants
+│   ├── parties.go                 # Party operations
+│   ├── daml.go                    # Daml decimal/instrument helpers
+│   ├── stream.go                  # gRPC update stream (listener)
+│   └── proto/                     # Generated protobuf code
+├── listener/                      # Real-time event listener
+│   ├── Dockerfile
+│   └── main.go                    # gRPC stream → WebSocket bridge
+├── frontend/                      # Vite SPA web frontend
+│   ├── Dockerfile
+│   ├── package.json
+│   ├── vite.config.js             # Dev server + proxy to backend
+│   ├── index.html
+│   ├── app.js                     # API client + UI logic + WebSocket
+│   └── style.css
+├── e2e/                           # Playwright end-to-end tests
+├── docs/                          # Extended documentation
+│   └── backend-api.md             # Per-endpoint API reference
+├── Canton.Aspire.Hosting/         # .NET Aspire hosting integration (alternative launcher)
+└── migracion_gRPC.md              # gRPC migration guide
 ```
 
 ## Party Distribution
 
-| Participant | Parties | JSON API |
-|---|---|---|
-| participant1 | admin, alice, executor | http://localhost:5013 |
-| participant2 | bob | http://localhost:5023 |
-| participant3 | charlie | http://localhost:5033 |
+| Participant | Parties | JSON API | gRPC |
+|---|---|---|---|
+| participant1 | admin, alice, executor | http://localhost:5013 | localhost:5011 |
+| participant2 | bob | http://localhost:5023 | localhost:5021 |
+| participant3 | charlie | http://localhost:5033 | localhost:5031 |
 
 ## API Endpoints
 
 The Go backend exposes a REST API at `http://localhost:8080/api/v1/`.
 
+**Transport**: The backend uses gRPC for reads (`GetLedgerEnd`, `GetActiveContracts`) and HTTP JSON API v2 for writes (`submit-and-wait`) and party management. Set `LEDGER_TRANSPORT=http` to fall back to full HTTP mode.
+
 | Method | Path | Description |
 |---|---|---|
-| GET | /health | Health check |
-| GET | /parties | List all parties across participants |
-| POST | /parties | Allocate a new party |
-| GET | /holdings?party=X | List holdings for a party |
-| POST | /mint | Mint a new bond |
-| POST | /transfer | Initiate a two-step transfer |
-| POST | /transfer/accept | Accept a transfer instruction |
-| POST | /transfer/reject | Reject a transfer instruction |
-| POST | /transfer/withdraw | Withdraw a transfer instruction |
-| POST | /self-transfer | Merge holdings (sender == receiver) |
-| POST | /burn | Burn a holding |
-| GET | /transfer-instructions?party=X | List pending transfers |
-| GET | /allocations?party=X | List allocations for a party |
-| POST | /allocations | Create a new allocation |
-| POST | /allocations/execute | Execute an allocation |
-| POST | /allocations/cancel | Cancel an allocation |
-| POST | /allocations/withdraw | Withdraw an allocation |
-| GET | /factory | Get or create the SimpleTokenRules factory |
+| GET | /api/v1/health | Health check |
+| GET | /api/v1/parties | List all parties across participants |
+| POST | /api/v1/parties | Allocate a new party |
+| GET | /api/v1/holdings?party=X | List holdings for a party |
+| POST | /api/v1/mint | Mint a new bond |
+| POST | /api/v1/transfer | Initiate a two-step transfer |
+| POST | /api/v1/transfer/accept | Accept a transfer instruction |
+| POST | /api/v1/transfer/reject | Reject a transfer instruction |
+| POST | /api/v1/transfer/withdraw | Withdraw a transfer instruction |
+| POST | /api/v1/self-transfer | Merge holdings (sender == receiver) |
+| POST | /api/v1/burn | Burn a holding |
+| GET | /api/v1/transfer-instructions?party=X | List pending transfers |
+| GET | /api/v1/allocations?party=X | List allocations for a party |
+| POST | /api/v1/allocations | Create a new DvP allocation |
+| POST | /api/v1/allocations/execute | Execute an allocation (by executor) |
+| POST | /api/v1/allocations/cancel | Cancel an allocation |
+| POST | /api/v1/allocations/withdraw | Withdraw an allocation before deadline |
+| GET/POST | /api/v1/factory | Get or create the SimpleTokenRules factory |
 
 ## API Examples
 
@@ -235,19 +211,15 @@ curl -X POST http://localhost:8080/api/v1/mint \
 ### List holdings
 
 ```bash
-curl http://localhost:8080/api/v1/holdings?party=alice
+curl "http://localhost:8080/api/v1/holdings?party=alice"
 ```
 
-### Transfer a bond
+### Transfer a bond (two-step)
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/transfer \
   -H "Content-Type: application/json" \
-  -d '{
-    "sender": "alice",
-    "receiver": "bob",
-    "amount": 500.00
-  }'
+  -d '{"sender": "alice", "receiver": "bob", "amount": 500.00}'
 ```
 
 ### Accept a transfer
@@ -255,24 +227,10 @@ curl -X POST http://localhost:8080/api/v1/transfer \
 ```bash
 curl -X POST http://localhost:8080/api/v1/transfer/accept \
   -H "Content-Type: application/json" \
-  -d '{
-    "party": "bob",
-    "contractId": "<contract-id>"
-  }'
+  -d '{"party": "bob", "contractId": "<contract-id>"}'
 ```
 
-### Burn a bond
-
-```bash
-curl -X POST http://localhost:8080/api/v1/burn \
-  -H "Content-Type: application/json" \
-  -d '{
-    "party": "alice",
-    "contractId": "<contract-id>"
-  }'
-```
-
-### Create an allocation
+### Create a DvP allocation
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/allocations \
@@ -289,102 +247,157 @@ curl -X POST http://localhost:8080/api/v1/allocations \
   }'
 ```
 
-### Execute an allocation
+### Execute an allocation (DvP settlement)
 
 ```bash
 curl -X POST http://localhost:8080/api/v1/allocations/execute \
   -H "Content-Type: application/json" \
-  -d '{
-    "party": "executor",
-    "contractId": "<allocation-contract-id>"
-  }'
-```
-
-### Cancel an allocation
-
-```bash
-curl -X POST http://localhost:8080/api/v1/allocations/cancel \
-  -H "Content-Type: application/json" \
-  -d '{
-    "party": "executor",
-    "contractId": "<allocation-contract-id>"
-  }'
-```
-
-### Withdraw an allocation
-
-```bash
-curl -X POST http://localhost:8080/api/v1/allocations/withdraw \
-  -H "Content-Type: application/json" \
-  -d '{
-    "party": "alice",
-    "contractId": "<allocation-contract-id>"
-  }'
+  -d '{"party": "executor", "contractId": "<allocation-contract-id>"}'
 ```
 
 ## Frontend
 
 Open http://localhost:3000 in your browser.
 
-The frontend provides:
-- **Dashboard** — overview of all bonds and parties
+The frontend is a Vite SPA running in Docker, proxying `/api` requests to the backend at `http://backend:8080`.
+
+**Pages:**
+- **Dashboard** — overview of all bonds, parties, pending transfers, and allocations
 - **Mint** — create new bonds
-- **Holdings** — view and filter bond holdings
-- **Transfer** — initiate two-step transfers
-- **Pending** — accept, reject, or withdraw pending transfers
-- **Burn** — burn bonds (owner or admin)
+- **Holdings** — view and filter bond holdings by party
+- **Transfer** — initiate two-step transfers between parties
+- **Pending** — accept, reject, or withdraw pending transfer instructions
+- **Burn** — burn bonds (by owner or admin)
 - **Parties** — view and create parties
 - **Allocations** — create, list, execute, cancel, and withdraw DvP allocations
 
-## Ledger Listener
+## Ledger Listener & WebSocket
 
-The listener is a separate service that polls the Canton JSON API to detect `created` and `archived` events for the bond templates and logs them as JSON lines.
+The listener subscribes to Canton's gRPC `UpdateService.GetUpdates` stream and broadcasts `created`/`archived` events to the frontend via WebSocket at `ws://localhost:8081/ws/bonds`. The frontend uses these events to auto-refresh views in real time.
 
-Environment variables (Docker defaults in `docker-compose.yml`):
-- `LISTENER_PARTICIPANT_URL` (default `http://participant1:5013`)
-- `LISTENER_USER_ID` (default `ledger-api-user`)
-- `LISTENER_POLL_INTERVAL` (default `2s`)
-- `LISTENER_REQUEST_TIMEOUT` (default `30s`)
-- `LISTENER_EMIT_INITIAL` (default `false`)
-- `LISTENER_TEMPLATES` (comma-separated list; defaults to bond templates)
-
-To tail logs:
 ```bash
+# Watch real-time events
 docker logs -f bond-listener
 ```
 
-### Verify the listener
-
-1) Confirm the service is running:
-```bash
-docker ps --format "table {{.Names}}\t{{.Status}}"
-```
-
-2) Generate events and watch logs:
-```bash
-curl -s http://localhost:8080/api/v1/factory | jq .
-curl -X POST http://localhost:8080/api/v1/mint \
-  -H "Content-Type: application/json" \
-  -d '{
-    "admin": "admin",
-    "owner": "alice",
-    "amount": 1000,
-    "couponRate": 5.0,
-    "maturityDate": "2028-12-31",
-    "description": "Test Bond"
-  }'
-docker logs -f bond-listener
-```
+The listener connects only to participant1 (the primary node). Events originating on participant2/3 that are visible through domain topology sharing on participant1 are also streamed.
 
 ## Bond Contract
 
-The bond token contract implements the CIP-056 token standard with:
+The bond token contract implements CIP-056 token interfaces with:
 
-- **SimpleTokenRules** — Factory contract for minting bonds, managing transfers, and allocations
-- **SimpleHolding** — A bond holding with amount, coupon rate, maturity date, and description
-- **LockedSimpleHolding** — Locked holding during two-step transfer
-- **SimpleTransferInstruction** — Pending transfer (accept/reject/withdraw)
-- **SimpleAllocation** — DvP allocation supporting execute, cancel, and withdraw workflows
+| Template | Purpose |
+|---|---|
+| **SimpleTokenRules** | Factory contract. Signatory: admin. Observers: all parties. Mint, transfer, and allocation entry point. |
+| **SimpleHolding** | Unlocked holding of a bond/cash instrument. Signatory: admin, owner. |
+| **LockedSimpleHolding** | Escrowed holding during transfer/allocation. Signatory: admin, owner. Lock expires at deadline. |
+| **SimpleTransferInstruction** | Pending two-step transfer (accept/reject/withdraw). |
+| **SimpleAllocation** | Funded DvP allocation. Settled by executor via `ExecuteTransfer`. |
+
+### DvP Workflow
+
+The delivery-vs-payment settlement uses the `SimpleAllocation` template with a neutral executor who controls the final delivery. Below is the complete sequence:
+
+```
+SENDER (alice)            FACTORY (SimpleTokenRules)       RECEIVER (bob)        EXECUTOR
+    │                            │                             │                    │
+    │  1. POST /allocations      │                             │                    │
+    │  ─────────────────────────▶│                             │                    │
+    │  {sender, receiver,        │                             │                    │
+    │   executor, amount,        │                             │                    │
+    │   allocateBefore,          │                             │                    │
+    │   settleBefore,            │                             │                    │
+    │   settlementRef}           │                             │                    │
+    │                            │                             │                    │
+    │                    Choice: AllocationFactory_Allocate    │                    │
+    │                            │                             │                    │
+    │                    ┌───────┴───────┐                     │                    │
+    │                    │ archive input │                     │                    │
+    │                    │   holdings    │                     │                    │
+    │                    └───────┬───────┘                     │                    │
+    │                            │                             │                    │
+    │              ┌─────────────┼─────────────┐               │                    │
+    │              ▼             ▼             ▼               │                    │
+    │      ┌──────────────┐ ┌───────────┐ ┌─────────┐          │                    │
+    │      │ LockedSimple │ │SimpleAlloc│ │ change  │          │                    │
+    │      │  Holding     │ │  ation    │ │ holding │          │                    │
+    │      │ (escrow)     │ │  (active) │ │ (if any)│          │                    │
+    │      │ owner:alice  │ │           │ │→ sender │          │                    │
+    │      │ lock:admin   │ │ executor  │ └─────────┘          │                    │
+    │      │ expires:     │ │ receiver  │                      │                    │
+    │      │ settleBefore │ │ deadlines │                      │                    │
+    │      └──────┬───────┘ └─────┬─────┘                      │                    │
+    │             │ references    │                            │                    │
+    │             └───────────────┘                            │                    │
+    │                                                          │                    │
+    │  [assets locked in escrow. Sender can Withdraw           │                    │
+    │   before allocateBefore. Executor can Cancel.]           │                    │
+    │                                                          │                    │
+    │                                           2. POST /allocations/execute        │
+    │                                           ┌───────────────────────────────────▶│
+    │                                           │            {party:executor,        │
+    │                                           │             contractId}            │
+    │                                           │                                    │
+    │                                           │          Choice:                   │
+    │                                           │    Allocation_ExecuteTransfer      │
+    │                                           │                                    │
+    │                                           │      ┌─────────────────┐           │
+    │                                           │      │ archive Locked  │           │
+    │                                           │      │ SimpleHolding   │           │
+    │                                           │      └────────┬────────┘           │
+    │                                           │               │                    │
+    │                                           │      ┌────────▼────────┐           │
+    │                                           │      │ SimpleHolding   │           │
+    │                        ┌──────────────────┼──────│ owner: bob      │           │
+    │                        │                  │      │ amount: 100     │──────▶ bob owns
+    │                        │ (change if any)  │      └─────────────────┘       the assets
+    │                        ▼                  │
+    │              ┌──────────────┐             │
+    │              │ SimpleHolding│             │
+    │              │ owner: alice │             │
+    │              └──────────────┘             │
+    │                                           │
+    │  [SETTLEMENT COMPLETE]                    │
+    │                                           │
+    │                                           │
+    │        ─ ─ ─ ─ Alternative paths ─ ─ ─ ─ ─
+    │
+    │  Sender Withdraw (before allocateBefore):
+    │    POST /allocations/withdraw
+    │    → archives LockedSimpleHolding
+    │    → returns SimpleHolding to sender
+    │
+    │  Executor Cancel (any time):
+    │    POST /allocations/cancel
+    │    → archives LockedSimpleHolding
+    │    → returns SimpleHolding to sender
+    │
+```
+
+**Step-by-step:**
+
+1. **Allocate** — sender locks assets via `AllocationFactory_Allocate` on the factory. Input `SimpleHolding` contracts are archived. A `LockedSimpleHolding` (escrow) and `SimpleAllocation` (funded, ready for settlement) are created. Excess is returned as change.
+
+2. **Execute** — the neutral executor calls `Allocation_ExecuteTransfer`. The locked holding is archived and a new `SimpleHolding` is created with `owner = receiver`. Settlement is final and atomic.
+
+3. **Cancel** — executor cancels the allocation at any time. Locked funds are returned to sender.
+
+4. **Withdraw** — sender withdraws their own allocation, but only before the `allocateBefore` deadline.
+
+## Transport Modes
+
+The backend supports two ledger transport modes, configured via `LEDGER_TRANSPORT`:
+
+| Mode | Reads | Writes / Party management |
+|---|---|---|
+| `grpc` (default) | gRPC `StateService` | HTTP JSON API v2 |
+| `http` | HTTP JSON API v2 | HTTP JSON API v2 |
+
+To switch to HTTP-only mode:
+
+```bash
+LEDGER_TRANSPORT=http docker compose up -d --build backend
+```
 
 ## Stopping
 
