@@ -67,12 +67,21 @@ func (c *Client) LedgerEnd(ctx context.Context) (int64, error) {
 
 // ActiveContracts queries contracts at the given offset using a wildcard filter.
 // Template filtering is applied client-side via ExtractCreatedEvents.
+// Canton's activeAtOffset must be strictly less than the current ledger end;
+// passing ledgerEnd itself returns an empty set.
 func (c *Client) ActiveContracts(ctx context.Context, offset int64, _ ...string) (ActiveContractsResponse, error) {
 	url := c.baseURL + "/v2/state/active-contracts"
 
+	// Use offset-1 to stay within the inclusive window Canton accepts.
+	// If offset is 0 we keep 0 (beginning of ledger).
+	queryOffset := offset - 1
+	if queryOffset < 0 {
+		queryOffset = 0
+	}
+
 	body := map[string]any{
 		"filter":         WildcardFilter(),
-		"activeAtOffset": offset,
+		"activeAtOffset": queryOffset,
 		"verbose":        false,
 	}
 
