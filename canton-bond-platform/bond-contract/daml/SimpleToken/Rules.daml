@@ -14,6 +14,7 @@ import SimpleToken.Holding
 import SimpleToken.TransferInstruction
 import SimpleToken.Allocation
 import SimpleToken.ContextUtils
+import SimpleToken.DvP
 
 -- | The factory contract for creating transfers and allocations.
 -- Single instance supports multiple instrument IDs.
@@ -63,6 +64,60 @@ template SimpleTokenRules
           maturityDate
           description
           meta = emptyMetadata
+
+    nonconsuming choice ProposeDvP
+      : ContractId DvPProposal
+      with
+        bondSender : Party
+        cashSender : Party
+        bondAmount : Decimal
+        cashAmount : Decimal
+        bondInstrumentId : InstrumentId
+        cashInstrumentId : InstrumentId
+        settlementRef : Text
+        settleBefore : Time
+        bondInputCids : [ContractId SimpleHolding]
+      controller bondSender
+      do
+        now <- getTime
+        assertMsg "settleBefore must be in the future"
+          (settleBefore > now)
+        assertMsg "Amount must be positive"
+          (bondAmount > 0.0 && cashAmount > 0.0)
+        assertMsg "Instruments not supported"
+          (bondInstrumentId.id `elem` supportedInstruments && cashInstrumentId.id `elem` supportedInstruments)
+        
+        totalBond <- archiveAndSumInputs bondSender bondInstrumentId (map (toInterfaceContractId @Holding) bondInputCids)
+        assertMsg ("Insufficient funds: have " <> show totalBond <> " but need " <> show bondAmount)
+          (totalBond >= bondAmount)
+
+        lockedCid <- create LockedSimpleHolding with
+          admin
+          owner = bondSender
+          instrumentId = bondInstrumentId
+          amount = bondAmount
+          couponRate = 0.0
+          maturityDate = date 2099 Dec 31
+          description = ""
+          lock = Lock with
+            holders = [admin]
+            expiresAt = Some settleBefore
+            expiresAfter = None
+            context = Some "dvp"
+          extraObservers = [cashSender]
+          meta = emptyMetadata
+
+        create DvPProposal with
+          admin
+          bondSender
+          cashSender
+          bondAmount
+          cashAmount
+          bondInstrumentId
+          cashInstrumentId
+          settlementRef
+          settleBefore
+          lockedBondCid = lockedCid
 
     interface instance TransferFactory for SimpleTokenRules where
       view = TransferFactoryView with

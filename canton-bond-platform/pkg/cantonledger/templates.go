@@ -7,6 +7,7 @@ const (
 	TemplateLockedSimpleHolding       = "#simple-token:SimpleToken.Holding:LockedSimpleHolding"
 	TemplateSimpleTransferInstruction = "#simple-token:SimpleToken.TransferInstruction:SimpleTransferInstruction"
 	TemplateSimpleAllocation          = "#simple-token:SimpleToken.Allocation:SimpleAllocation"
+	TemplateDvPProposal               = "#simple-token:SimpleToken.DvP:DvPProposal"
 )
 
 // BondTemplates is the default set monitored by the ledger listener.
@@ -17,6 +18,7 @@ func BondTemplates() []string {
 		TemplateLockedSimpleHolding,
 		TemplateSimpleTransferInstruction,
 		TemplateSimpleAllocation,
+		TemplateDvPProposal,
 	}
 }
 
@@ -44,4 +46,10 @@ const (
 	ChoiceAllocationExecute           = "Allocation_ExecuteTransfer"
 	ChoiceAllocationCancel            = "Allocation_Cancel"
 	ChoiceAllocationWithdraw          = "Allocation_Withdraw"
+	ChoiceSimpleAllocationExecute     = "Execute"
+	ChoiceSimpleAllocationCancel      = "Cancel"
+	ChoiceSimpleAllocationWithdraw    = "Withdraw"
+	ChoiceProposeDvP                  = "ProposeDvP"
+	ChoiceAcceptAndPay                = "Accept_And_Pay"
+	ChoiceCancelDvP                   = "Cancel_DvP"
 )

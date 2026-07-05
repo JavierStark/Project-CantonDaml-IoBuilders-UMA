@@ -75,6 +75,8 @@ func (s *Server) Router() *echo.Echo {
 	v1.POST("/allocations/withdraw", s.handleWithdrawAllocation)
 	v1.GET("/factory", s.handleFactory)
 	v1.POST("/factory", s.handleFactory)
+	v1.POST("/dvp/propose", s.handleProposeDvP)
+	v1.POST("/dvp/accept", s.handleAcceptDvP)
 
 	return e
 }
@@ -1189,15 +1191,15 @@ type allocationActionRequest struct {
 }
 
 func (s *Server) handleExecuteAllocation(c echo.Context) error {
-	return s.handleAllocationAction(c, cantonledger.ChoiceAllocationExecute, "execute")
+	return s.handleAllocationAction(c, cantonledger.ChoiceSimpleAllocationExecute, "execute")
 }
 
 func (s *Server) handleCancelAllocation(c echo.Context) error {
-	return s.handleAllocationAction(c, cantonledger.ChoiceAllocationCancel, "cancel")
+	return s.handleAllocationAction(c, cantonledger.ChoiceSimpleAllocationCancel, "cancel")
 }
 
 func (s *Server) handleWithdrawAllocation(c echo.Context) error {
-	return s.handleAllocationAction(c, cantonledger.ChoiceAllocationWithdraw, "withdraw")
+	return s.handleAllocationAction(c, cantonledger.ChoiceSimpleAllocationWithdraw, "withdraw")
 }
 
 func (s *Server) handleAllocationAction(c echo.Context, choice, action string) error {
@@ -1227,7 +1229,7 @@ func (s *Server) handleAllocationAction(c echo.Context, choice, action string) e
 	cmdID := newCommandID("allocation-" + action)
 	submitReq := cantonledger.Command{
 		ExerciseCommand: &cantonledger.ExerciseCommand{
-			TemplateID: cantonledger.TemplateAllocation,
+			TemplateID: cantonledger.TemplateSimpleAllocation,
 			Choice:     choice,
 			ContractID: req.ContractID,
 			ChoiceArgument: map[string]any{
@@ -1347,4 +1349,224 @@ func newCommandID(prefix string) string {
 	b := make([]byte, 8)
 	rand.Read(b)
 	return fmt.Sprintf("%s-%s", prefix, hex.EncodeToString(b))
+}
+
+type proposeDvPRequest struct {
+	BondSender       string  `json:"bondSender"`
+	CashSender       string  `json:"cashSender"`
+	BondAmount       float64 `json:"bondAmount"`
+	CashAmount       float64 `json:"cashAmount"`
+	BondInstrumentId string  `json:"bondInstrumentId"`
+	CashInstrumentId string  `json:"cashInstrumentId"`
+	SettlementRef    string  `json:"settlementRef"`
+	SettleBefore     string  `json:"settleBefore"`
+}
+
+func (s *Server) handleProposeDvP(c echo.Context) error {
+	var req proposeDvPRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+
+	senderClient, err := s.clientForParty(req.BondSender)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "bondSender: " + err.Error()})
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request().Context(), s.cfg.RequestTimeout)
+	defer cancel()
+
+	bondSenderID, err := s.lookupPartyIdentifier(ctx, senderClient, req.BondSender)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "bondSender not found"})
+	}
+	cashSenderClient, err := s.clientForParty(req.CashSender)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "cashSender: " + err.Error()})
+	}
+	cashSenderID, err := s.lookupPartyIdentifier(ctx, cashSenderClient, req.CashSender)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "cashSender not found"})
+	}
+
+	factoryClient, ok := s.clients["participant1"]
+	if !ok {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "no participant1 client for factory lookup"})
+	}
+	factoryOffset, err := factoryClient.LedgerEnd(ctx)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query factory ledger end"})
+	}
+	factoryResp, err := factoryClient.ActiveContracts(ctx, factoryOffset, cantonledger.TemplateSimpleTokenRules)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query factory"})
+	}
+	factoryEvents := cantonledger.ExtractCreatedEvents(factoryResp, cantonledger.TemplateSimpleTokenRules)
+	if len(factoryEvents) == 0 {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "no SimpleTokenRules factory found"})
+	}
+	factoryCID := factoryEvents[0].ContractID
+
+	holdingsOffset, err := senderClient.LedgerEnd(ctx)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
+	}
+	holdingsResp, err := senderClient.ActiveContracts(ctx, holdingsOffset, cantonledger.TemplateSimpleHolding)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query holdings"})
+	}
+	holdingsEvents := cantonledger.ExtractCreatedEvents(holdingsResp, cantonledger.TemplateSimpleHolding)
+
+	var inputCIDs []string
+	remaining := req.BondAmount
+	for _, evt := range holdingsEvents {
+		if remaining <= 0 {
+			break
+		}
+		if evt.GetStringField("owner") != bondSenderID || evt.IsLocked() {
+			continue
+		}
+
+		var instID string
+		instRaw, ok := evt.GetField("instrumentId")
+		if ok {
+			if im, isMap := instRaw.(map[string]any); isMap {
+				if v, hasId := im["id"].(string); hasId {
+					instID = v
+				}
+			}
+		}
+		if instID != req.BondInstrumentId {
+			continue
+		}
+
+		amt := evt.GetDecimalField("amount")
+		if amt <= 0 {
+			continue
+		}
+		inputCIDs = append(inputCIDs, evt.ContractID)
+		remaining -= amt
+	}
+
+	if remaining > 0 {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": fmt.Sprintf("insufficient %s holdings", req.BondInstrumentId)})
+	}
+
+	settlementRef := req.SettlementRef
+	if settlementRef == "" {
+		settlementRef = fmt.Sprintf("dvp-%s", time.Now().UTC().Format("20060102T150405"))
+	}
+
+	factoryAdmin := factoryEvents[0].GetStringField("admin")
+
+	choiceArg := map[string]any{
+		"bondSender":       bondSenderID,
+		"cashSender":       cashSenderID,
+		"bondAmount":       cantonledger.DamlDecimal(req.BondAmount),
+		"cashAmount":       cantonledger.DamlDecimal(req.CashAmount),
+		"bondInstrumentId": cantonledger.InstrumentID(factoryAdmin, req.BondInstrumentId),
+		"cashInstrumentId": cantonledger.InstrumentID(factoryAdmin, req.CashInstrumentId),
+		"settlementRef":    settlementRef,
+		"settleBefore":     req.SettleBefore,
+		"bondInputCids":    inputCIDs,
+	}
+
+	cmdID := newCommandID("propose-dvp")
+	submitReq := cantonledger.Command{
+		ExerciseCommand: &cantonledger.ExerciseCommand{
+			TemplateID:     cantonledger.TemplateSimpleTokenRules,
+			Choice:         cantonledger.ChoiceProposeDvP,
+			ContractID:     factoryCID,
+			ChoiceArgument: choiceArg,
+		},
+	}
+
+	offset, err := senderClient.SubmitCommand(ctx, cmdID, submitReq, []string{bondSenderID})
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("propose failed: %v", err)})
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"status": "proposed",
+		"offset": offset,
+	})
+}
+
+type acceptDvPRequest struct {
+	CashSender       string `json:"cashSender"`
+	CashInstrumentId string `json:"cashInstrumentId"`
+	ContractId       string `json:"contractId"`
+}
+
+func (s *Server) handleAcceptDvP(c echo.Context) error {
+	var req acceptDvPRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+
+	client, err := s.clientForParty(req.CashSender)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "cashSender: " + err.Error()})
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request().Context(), s.cfg.RequestTimeout)
+	defer cancel()
+
+	cashSenderID, err := s.lookupPartyIdentifier(ctx, client, req.CashSender)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "cashSender not found"})
+	}
+
+	holdingsOffset, err := client.LedgerEnd(ctx)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
+	}
+	holdingsResp, err := client.ActiveContracts(ctx, holdingsOffset, cantonledger.TemplateSimpleHolding)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query holdings"})
+	}
+	holdingsEvents := cantonledger.ExtractCreatedEvents(holdingsResp, cantonledger.TemplateSimpleHolding)
+
+	var inputCIDs []string
+	for _, evt := range holdingsEvents {
+		if evt.GetStringField("owner") != cashSenderID || evt.IsLocked() {
+			continue
+		}
+		var instID string
+		if instRaw, ok := evt.GetField("instrumentId"); ok {
+			if im, isMap := instRaw.(map[string]any); isMap {
+				if v, hasId := im["id"].(string); hasId {
+					instID = v
+				}
+			}
+		}
+		if instID != req.CashInstrumentId {
+			continue
+		}
+		inputCIDs = append(inputCIDs, evt.ContractID)
+	}
+
+	choiceArg := map[string]any{
+		"cashInputCids": inputCIDs,
+	}
+
+	cmdID := newCommandID("accept-dvp")
+	submitReq := cantonledger.Command{
+		ExerciseCommand: &cantonledger.ExerciseCommand{
+			TemplateID:     cantonledger.TemplateDvPProposal,
+			Choice:         cantonledger.ChoiceAcceptAndPay,
+			ContractID:     req.ContractId,
+			ChoiceArgument: choiceArg,
+		},
+	}
+
+	offset, err := client.SubmitCommand(ctx, cmdID, submitReq, []string{cashSenderID})
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("accept failed: %v", err)})
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"status": "accepted",
+		"offset": offset,
+	})
 }

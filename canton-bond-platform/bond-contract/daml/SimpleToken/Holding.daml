@@ -18,7 +18,8 @@ template SimpleHolding
     description : Text
     meta : Metadata
   where
-    signatory admin, owner
+    signatory admin
+    observer owner
     ensure amount > 0.0
 
     choice TransferOwnership

@@ -348,7 +348,7 @@ function renderAllocationsTable(data) {
         <td style="font-size:0.75rem;max-width:120px;overflow:hidden;text-overflow:ellipsis" title="${a.contractId}">${a.contractId.substring(0, 12)}…</td>
         <td>
         <button class="btn-small btn-success" data-action="execute-allocation" data-cid="${a.contractId}" data-party="${executor}">Execute</button>
-        <button class="btn-small btn-danger" data-action="cancel-allocation" data-cid="${a.contractId}" data-party="${executor}">Cancel</button>
+        <button class="btn-small btn-danger" data-action="cancel-allocation" data-cid="${a.contractId}" data-party="${sender}">Cancel</button>
         <button class="btn-small" data-action="withdraw-allocation" data-cid="${a.contractId}" data-party="${sender}">Withdraw</button>
         </td>
         </tr>`;

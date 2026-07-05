@@ -1,0 +1,111 @@
+module SimpleToken.DvP where
+
+import Splice.Api.Token.HoldingV1
+import Splice.Api.Token.MetadataV1
+import SimpleToken.Holding
+import SimpleToken.ContextUtils
+import DA.Date
+
+archiveAndSumSimpleInputs : Party -> InstrumentId -> [ContractId SimpleHolding] -> Update Decimal
+archiveAndSumSimpleInputs expectedOwner expectedInstrumentId holdingCids = do
+  amounts <- forA holdingCids (\cid -> do
+      holding <- fetch cid
+      assertMsg "Input holding owner mismatch" (holding.owner == expectedOwner)
+      assertMsg "Input holding instrument mismatch" (holding.instrumentId == expectedInstrumentId)
+      archive cid
+      pure holding.amount
+    )
+  pure (sum amounts)
+
+-- | A proposal for an atomic Delivery vs Payment swap.
+-- The bond sender locks their bonds into this contract.
+-- The cash sender can accept the proposal by providing the required cash holdings.
+template DvPProposal
+  with
+    admin : Party
+    bondSender : Party
+    cashSender : Party
+    bondAmount : Decimal
+    cashAmount : Decimal
+    bondInstrumentId : InstrumentId
+    cashInstrumentId : InstrumentId
+    settlementRef : Text
+    settleBefore : Time
+    lockedBondCid : ContractId LockedSimpleHolding
+  where
+    signatory admin, bondSender
+    observer cashSender
+
+    -- Cash sender accepts the proposal and executes the swap
+    choice Accept_And_Pay
+      : ContractId SimpleHolding
+      with
+        cashInputCids : [ContractId SimpleHolding]
+      controller cashSender
+      do
+        now <- getTime
+        assertMsg "Settlement has expired (settleBefore passed)"
+          (now < settleBefore)
+
+        -- 1. Archive locked bond
+        lockedBond <- fetch lockedBondCid
+        archive lockedBondCid
+        
+        -- 2. Verify and archive cash inputs
+        cashTotal <- archiveAndSumSimpleInputs cashSender cashInstrumentId cashInputCids
+        assertMsg ("Insufficient cash funds: have " <> show cashTotal <> " but need " <> show cashAmount)
+          (cashTotal >= cashAmount)
+
+        -- 3. Create Bond holding for cashSender (Bob)
+        newBondCid <- create SimpleHolding with
+          admin
+          owner = cashSender
+          instrumentId = bondInstrumentId
+          amount = bondAmount
+          couponRate = lockedBond.couponRate
+          maturityDate = lockedBond.maturityDate
+          description = lockedBond.description
+          meta = emptyMetadata
+
+        -- 4. Create Cash holding for bondSender (Alice)
+        create SimpleHolding with
+          admin
+          owner = bondSender
+          instrumentId = cashInstrumentId
+          amount = cashAmount
+          couponRate = 0.0
+          maturityDate = date 2099 Dec 31
+          description = "Cash settlement"
+          meta = emptyMetadata
+
+        -- 5. Return cash change if overpaid
+        if cashTotal > cashAmount then do
+          changeCid <- create SimpleHolding with
+            admin
+            owner = cashSender
+            instrumentId = cashInstrumentId
+            amount = cashTotal - cashAmount
+            couponRate = 0.0
+            maturityDate = date 2099 Dec 31
+            description = "Cash change"
+            meta = emptyMetadata
+          pure newBondCid
+        else
+          pure newBondCid
+
+    -- Bond sender can cancel if it expires or if they change their mind
+    choice Cancel_DvP
+      : ContractId SimpleHolding
+      controller bondSender
+      do
+        lockedBond <- fetch lockedBondCid
+        archive lockedBondCid
+        create SimpleHolding with
+          admin
+          owner = bondSender
+          instrumentId = bondInstrumentId
+          amount = lockedBond.amount
+          couponRate = lockedBond.couponRate
+          maturityDate = lockedBond.maturityDate
+          description = lockedBond.description
+          meta = emptyMetadata
