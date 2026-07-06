@@ -77,6 +77,8 @@ func (s *Server) Router() *echo.Echo {
 	v1.POST("/factory", s.handleFactory)
 	v1.POST("/dvp/propose", s.handleProposeDvP)
 	v1.POST("/dvp/accept", s.handleAcceptDvP)
+	v1.GET("/dvp/proposals", s.handleListDvPProposals)
+	v1.POST("/dvp/cancel", s.handleCancelDvP)
 
 	return e
 }
@@ -617,10 +619,9 @@ func (s *Server) handleTransfer(c echo.Context) error {
 		},
 	}
 
-	// Submit through participant1 (factory's home participant) with both admin and sender
-	// in actAs, so Canton can resolve the SimpleTokenRules factory contract (signatory: admin)
-	// and authorize the holding consumption (owner: sender).
-	offset, err := factoryClient.SubmitCommand(ctx, cmdID, submitReq, []string{factoryAdmin, senderID})
+	// Submit through senderClient with only sender in actAs.
+	// The factory contract carries the admin's authority automatically (delegated execution).
+	offset, err := senderClient.SubmitCommand(ctx, cmdID, submitReq, []string{senderID})
 	if err != nil {
 		log.Printf("transfer error: %v", err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("transfer failed: %v", err)})
@@ -1167,10 +1168,9 @@ func (s *Server) handleCreateAllocation(c echo.Context) error {
 		},
 	}
 
-	// Submit through participant1 (factory's home participant) with both admin and sender
-	// in actAs, so Canton can resolve the SimpleTokenRules factory contract (signatory: admin)
-	// and authorize the holding consumption (owner: sender).
-	offset, err := factoryClient.SubmitCommand(ctx, cmdID, submitReq, []string{factoryAdmin, senderID})
+	// Submit through senderClient with only sender in actAs.
+	// The factory contract carries the admin's authority automatically (delegated execution).
+	offset, err := senderClient.SubmitCommand(ctx, cmdID, submitReq, []string{senderID})
 	if err != nil {
 		log.Printf("allocation error: %v", err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("allocation failed: %v", err)})
@@ -1293,11 +1293,11 @@ func (s *Server) handleFactory(c echo.Context) error {
 		for _, p := range s.cfg.Participants {
 			pc := s.clients[p.Name]
 			if pc == nil {
-				continue
+				return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": fmt.Sprintf("client not ready for %s", p.Name)})
 			}
 			allParties, err := pc.Parties(ctx)
 			if err != nil {
-				continue
+				return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": fmt.Sprintf("failed to get parties for %s: %v", p.Name, err)})
 			}
 			for _, party := range allParties {
 				if party.Party != adminID {
@@ -1568,6 +1568,134 @@ func (s *Server) handleAcceptDvP(c echo.Context) error {
 
 	return c.JSON(http.StatusOK, map[string]any{
 		"status": "accepted",
+		"offset": offset,
+	})
+}
+
+func (s *Server) handleListDvPProposals(c echo.Context) error {
+	party := c.QueryParam("party")
+	if party == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "party query parameter is required"})
+	}
+
+	client, err := s.clientForParty(party)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request().Context(), s.cfg.RequestTimeout)
+	defer cancel()
+
+	partyID, err := s.lookupPartyIdentifier(ctx, client, party)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "party not found"})
+	}
+
+	offset, err := client.LedgerEnd(ctx)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query ledger end"})
+	}
+
+	resp, err := client.ActiveContracts(ctx, offset, cantonledger.TemplateDvPProposal)
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": "failed to query DvP proposals"})
+	}
+
+	events := cantonledger.ExtractCreatedEvents(resp, cantonledger.TemplateDvPProposal)
+
+	var proposals []map[string]any
+	for _, evt := range events {
+		admin := evt.GetStringField("admin")
+		bondSender := evt.GetStringField("bondSender")
+		cashSender := evt.GetStringField("cashSender")
+
+		if partyID != admin && partyID != bondSender && partyID != cashSender {
+			continue
+		}
+
+		bondAmount := evt.GetDecimalField("bondAmount")
+		cashAmount := evt.GetDecimalField("cashAmount")
+		settlementRef := evt.GetStringField("settlementRef")
+		settleBefore := evt.GetStringField("settleBefore")
+
+		bondInst := ""
+		if instRaw, ok := evt.GetField("bondInstrumentId"); ok {
+			if instMap, ok := instRaw.(map[string]any); ok {
+				bondInst = fmt.Sprintf("%v", instMap["id"])
+			}
+		}
+		cashInst := ""
+		if instRaw, ok := evt.GetField("cashInstrumentId"); ok {
+			if instMap, ok := instRaw.(map[string]any); ok {
+				cashInst = fmt.Sprintf("%v", instMap["id"])
+			}
+		}
+
+		proposals = append(proposals, map[string]any{
+			"contractId":       evt.ContractID,
+			"templateId":       evt.TemplateID,
+			"admin":            admin,
+			"bondSender":       bondSender,
+			"cashSender":       cashSender,
+			"bondAmount":       bondAmount,
+			"cashAmount":       cashAmount,
+			"bondInstrumentId": bondInst,
+			"cashInstrumentId": cashInst,
+			"settlementRef":    settlementRef,
+			"settleBefore":     settleBefore,
+		})
+	}
+
+	if proposals == nil {
+		proposals = []map[string]any{}
+	}
+	return c.JSON(http.StatusOK, proposals)
+}
+
+type cancelDvPRequest struct {
+	BondSender string `json:"bondSender"`
+	ContractId string `json:"contractId"`
+}
+
+func (s *Server) handleCancelDvP(c echo.Context) error {
+	var req cancelDvPRequest
+	if err := c.Bind(&req); err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid request body"})
+	}
+	if req.BondSender == "" || req.ContractId == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "bondSender and contractId are required"})
+	}
+
+	client, err := s.clientForParty(req.BondSender)
+	if err != nil {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "bondSender: " + err.Error()})
+	}
+
+	ctx, cancel := context.WithTimeout(c.Request().Context(), s.cfg.RequestTimeout)
+	defer cancel()
+
+	bondSenderID, err := s.lookupPartyIdentifier(ctx, client, req.BondSender)
+	if err != nil {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": "bondSender not found"})
+	}
+
+	cmdID := newCommandID("cancel-dvp")
+	submitReq := cantonledger.Command{
+		ExerciseCommand: &cantonledger.ExerciseCommand{
+			TemplateID:     cantonledger.TemplateDvPProposal,
+			Choice:         cantonledger.ChoiceCancelDvP,
+			ContractID:     req.ContractId,
+			ChoiceArgument: map[string]any{},
+		},
+	}
+
+	offset, err := client.SubmitCommand(ctx, cmdID, submitReq, []string{bondSenderID})
+	if err != nil {
+		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("cancel failed: %v", err)})
+	}
+
+	return c.JSON(http.StatusOK, map[string]any{
+		"status": "cancelled",
 		"offset": offset,
 	})
 }

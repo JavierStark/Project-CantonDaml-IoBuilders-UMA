@@ -83,6 +83,14 @@ async function loadPageData(page) {
             }
             await loadAllocations();
             break;
+        case 'dvp':
+            if (!parties.length) {
+                await loadParties();
+            } else {
+                populatePartySelects();
+            }
+            await loadDvPProposals();
+            break;
         case 'burn': loadBurnHoldings(); break;
         case 'mint': populatePartySelects(); break;
         case 'transfer': populatePartySelects(); break;
@@ -407,14 +415,17 @@ function populatePartySelects() {
         'allocationSender',
         'allocationReceiver',
         'allocationExecutor',
-        'allocationsFilter'
+        'allocationsFilter',
+        'dvpBondSender',
+        'dvpCashSender',
+        'dvpFilter'
     ];
     const unique = uniqueParties(parties);
     for (const id of selects) {
         const sel = $(id);
         if (!sel) continue;
         const current = sel.value;
-        sel.innerHTML = id === 'holdingsFilter' || id === 'pendingFilter' || id === 'allocationsFilter' ? '<option value="">All</option>' : '';
+        sel.innerHTML = id === 'holdingsFilter' || id === 'pendingFilter' || id === 'allocationsFilter' || id === 'dvpFilter' ? '<option value="">All</option>' : '';
         for (const p of unique) {
             const token = partyToken(p);
             const opt = document.createElement('option');
@@ -490,6 +501,16 @@ document.addEventListener('click', e => {
         case 'withdraw-allocation':
             if (confirm('Withdraw this allocation? Your holdings will be returned.')) {
                 withdrawAllocation(cid, party);
+            }
+            break;
+        case 'accept-dvp':
+            if (confirm('Accept this DvP proposal? Your cash holdings will be used to pay for the bonds atomically.')) {
+                acceptDvP(cid, party);
+            }
+            break;
+        case 'cancel-dvp':
+            if (confirm('Cancel this DvP proposal? Locked bonds will be returned.')) {
+                cancelDvP(cid, party);
             }
             break;
     }
@@ -733,6 +754,153 @@ $('holdingsFilter').addEventListener('change', loadHoldings);
 $('pendingFilter').addEventListener('change', loadPending);
 $('allocationsFilter').addEventListener('change', loadAllocations);
 $('burnParty').addEventListener('change', loadBurnHoldings);
+$('dvpFilter').addEventListener('change', loadDvPProposals);
+
+// ---- DvP Propose Form ----
+$('dvpProposeForm').addEventListener('submit', async e => {
+    e.preventDefault();
+    const btn = e.target.querySelector('button');
+    const result = $('dvpProposeResult');
+    hideResult(result);
+    if (!requireFactoryReady(result)) return;
+    btn.disabled = true;
+    try {
+        const settleBeforeStr = $('dvpSettleBefore').value;
+        if (new Date(settleBeforeStr) <= new Date()) {
+            showResult(result, 'Settle Before must be in the future.', true);
+            btn.disabled = false;
+            return;
+        }
+        const data = await api('/dvp/propose', {
+            method: 'POST',
+            body: {
+                bondSender: $('dvpBondSender').value,
+                cashSender: $('dvpCashSender').value,
+                bondAmount: parseFloat($('dvpBondAmount').value),
+                cashAmount: parseFloat($('dvpCashAmount').value),
+                bondInstrumentId: $('dvpBondInstrument').value,
+                cashInstrumentId: $('dvpCashInstrument').value,
+                settlementRef: $('dvpSettlementRef').value.trim(),
+                settleBefore: toISOStringFromLocal(settleBeforeStr),
+            },
+        });
+        showResult(result, `DvP Proposed! Offset: ${data.offset}`);
+        setTimeout(() => { loadDvPProposals(); loadDashboard(); }, 1000);
+    } catch (err) {
+        showResult(result, err.message, true);
+    } finally {
+        btn.disabled = false;
+    }
+});
+
+// ---- DvP Actions ----
+async function acceptDvP(contractId, cashSenderParty) {
+    try {
+        // Determine the cash instrument from the proposal data attribute
+        const btn = document.querySelector(`[data-action="accept-dvp"][data-cid="${contractId}"]`);
+        const cashInst = btn ? btn.dataset.cashinst || 'EUR' : 'EUR';
+        const data = await api('/dvp/accept', {
+            method: 'POST',
+            body: {
+                cashSender: cashSenderParty,
+                cashInstrumentId: cashInst,
+                contractId: contractId,
+            },
+        });
+        alert('DvP accepted! Atomic swap completed.');
+        loadDvPProposals();
+        loadDashboard();
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+async function cancelDvP(contractId, bondSenderParty) {
+    try {
+        await api('/dvp/cancel', {
+            method: 'POST',
+            body: {
+                bondSender: bondSenderParty,
+                contractId: contractId,
+            },
+        });
+        alert('DvP cancelled! Bonds returned to sender.');
+        loadDvPProposals();
+        loadDashboard();
+    } catch (err) {
+        alert('Error: ' + err.message);
+    }
+}
+
+async function loadDvPProposals() {
+    try {
+        const filter = $('dvpFilter').value;
+        const byContract = new Map();
+        for (const p of uniqueParties(parties)) {
+            const token = partyToken(p);
+            if (!token) continue;
+            if (filter && token !== filter) continue;
+            try {
+                const list = await api(`/dvp/proposals?party=${token}`);
+                for (const row of list) {
+                    if (!byContract.has(row.contractId)) {
+                        byContract.set(row.contractId, row);
+                    }
+                }
+            } catch (err) {
+                console.warn(`Failed to load DvP proposals for ${token}:`, err);
+            }
+        }
+        const values = Array.from(byContract.values());
+        renderDvPProposalsTable(values);
+    } catch (err) {
+        $('dvpProposalsList').innerHTML = `<p class="error">${err.message}</p>`;
+    }
+}
+
+function renderDvPProposalsTable(data) {
+    const el = $('dvpProposalsList');
+    if (!data.length) {
+        el.innerHTML = '<p>No active DvP proposals.</p>';
+        return;
+    }
+
+    let html = `<table><thead><tr>
+    <th>Bond Sender</th>
+    <th>Cash Sender</th>
+    <th>Bonds</th>
+    <th>Cash</th>
+    <th>Bond Inst.</th>
+    <th>Cash Inst.</th>
+    <th>Settle Before</th>
+    <th>Ref</th>
+    <th>Actions</th>
+    </tr></thead><tbody>`;
+
+    for (const p of data) {
+        const bondSender = shortName(p.bondSender);
+        const cashSender = shortName(p.cashSender);
+        const settleBefore = p.settleBefore ? p.settleBefore.replace('T', ' ').substring(0, 16) : '-';
+
+        html += `<tr>
+        <td>${bondSender}</td>
+        <td>${cashSender}</td>
+        <td>${p.bondAmount}</td>
+        <td>${p.cashAmount}</td>
+        <td>${p.bondInstrumentId || '-'}</td>
+        <td>${p.cashInstrumentId || '-'}</td>
+        <td>${settleBefore}</td>
+        <td title="${p.settlementRef || ''}">${(p.settlementRef || '-').substring(0, 20)}</td>
+        <td>
+        <button class="btn-small btn-success" data-action="accept-dvp" data-cid="${p.contractId}" data-party="${cashSender}" data-cashinst="${p.cashInstrumentId || 'EUR'}">Accept & Pay</button>
+        <button class="btn-small btn-danger" data-action="cancel-dvp" data-cid="${p.contractId}" data-party="${bondSender}">Cancel</button>
+        </td>
+        </tr>`;
+    }
+
+    html += '</tbody></table>';
+    el.innerHTML = html;
+}
 
 // Init - auto-create factory
 (async function init() {
@@ -800,6 +968,9 @@ function initWebSocket(listenerUrl) {
         } else if (tpl === 'SimpleAllocation') {
             if (currentPage === 'dashboard') loadDashboard();
             if (currentPage === 'allocations') loadAllocations();
+        } else if (tpl === 'DvPProposal') {
+            if (currentPage === 'dashboard') loadDashboard();
+            if (currentPage === 'dvp') loadDvPProposals();
         } else if (tpl === 'SimpleTokenRules') {
             loadDashboard();
         }

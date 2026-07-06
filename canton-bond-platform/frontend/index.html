@@ -16,6 +16,7 @@
             <a href="#" data-page="transfer" data-testid="nav-transfer">Transfer</a>
             <a href="#" data-page="pending" data-testid="nav-pending">Pending</a>
             <a href="#" data-page="allocations" data-testid="nav-allocations">Allocations</a>
+            <a href="#" data-page="dvp" data-testid="nav-dvp">DvP</a>
             <a href="#" data-page="burn" data-testid="nav-burn">Burn</a>
             <a href="#" data-page="parties" data-testid="nav-parties">Parties</a>
         </nav>
@@ -292,6 +293,68 @@
             <div class="card">
                 <h3>All Parties</h3>
                 <div id="partyList" data-testid="partyList"><p class="loading">Loading...</p></div>
+            </div>
+        </section>
+
+        <section id="page-dvp" class="page" data-testid="page-dvp">
+            <h2>Delivery vs Payment (Atomic Swap)</h2>
+            <div class="info-box">
+                <h3>How it works</h3>
+                DvP performs an <strong>atomic two-leg swap</strong>: one party sends bonds and receives cash in a single, indivisible transaction. The bond sender creates a <code>DvPProposal</code> which locks their bonds. The cash sender then <em>accepts</em> the proposal by providing cash holdings — both legs settle atomically. If either party backs out, the bond sender can <em>cancel</em> the proposal to recover their locked bonds.
+            </div>
+            <div class="card">
+                <h3>Propose DvP</h3>
+                <form id="dvpProposeForm" data-testid="dvpProposeForm">
+                    <div class="form-row">
+                        <label>Bond Sender (sells bonds)</label>
+                        <select id="dvpBondSender" required data-testid="dvpBondSender"></select>
+                    </div>
+                    <div class="form-row">
+                        <label>Cash Sender (buys bonds)</label>
+                        <select id="dvpCashSender" required data-testid="dvpCashSender"></select>
+                    </div>
+                    <div class="form-row">
+                        <label>Bond Instrument</label>
+                        <select id="dvpBondInstrument" required data-testid="dvpBondInstrument">
+                            <option value="BOND">BOND</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <label>Bond Amount</label>
+                        <input type="number" id="dvpBondAmount" step="0.01" min="0.01" required data-testid="dvpBondAmount">
+                    </div>
+                    <div class="form-row">
+                        <label>Cash Instrument</label>
+                        <select id="dvpCashInstrument" required data-testid="dvpCashInstrument">
+                            <option value="EUR">EUR</option>
+                            <option value="CASH">CASH</option>
+                        </select>
+                    </div>
+                    <div class="form-row">
+                        <label>Cash Amount</label>
+                        <input type="number" id="dvpCashAmount" step="0.01" min="0.01" required data-testid="dvpCashAmount">
+                    </div>
+                    <div class="form-row">
+                        <label>Settle Before (UTC)</label>
+                        <input type="datetime-local" id="dvpSettleBefore" required data-testid="dvpSettleBefore">
+                    </div>
+                    <div class="form-row">
+                        <label>Settlement Ref (optional)</label>
+                        <input type="text" id="dvpSettlementRef" placeholder="e.g. dvp-2028-001" data-testid="dvpSettlementRef">
+                    </div>
+                    <button type="submit" data-testid="dvpProposeSubmit">Propose DvP</button>
+                </form>
+                <div id="dvpProposeResult" class="result" data-testid="dvpProposeResult"></div>
+            </div>
+            <div class="card">
+                <h3>Active DvP Proposals</h3>
+                <div class="filter-row">
+                    <label>Filter by party:</label>
+                    <select id="dvpFilter" data-testid="dvpFilter">
+                        <option value="">All Parties</option>
+                    </select>
+                </div>
+                <div id="dvpProposalsList" data-testid="dvpProposalsList"><p class="loading">Loading...</p></div>
             </div>
         </section>
     </main>
