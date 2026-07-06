@@ -619,9 +619,10 @@ func (s *Server) handleTransfer(c echo.Context) error {
 		},
 	}
 
-	// Submit through senderClient with only sender in actAs.
-	// The factory contract carries the admin's authority automatically (delegated execution).
-	offset, err := senderClient.SubmitCommand(ctx, cmdID, submitReq, []string{senderID})
+	// Submit through participant1 (factory's home participant) with both admin and sender
+	// in actAs, so Canton can resolve the SimpleTokenRules factory contract (signatory: admin)
+	// and authorize the holding consumption (owner: sender).
+	offset, err := factoryClient.SubmitCommand(ctx, cmdID, submitReq, []string{factoryAdmin, senderID})
 	if err != nil {
 		log.Printf("transfer error: %v", err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("transfer failed: %v", err)})
@@ -1168,9 +1169,10 @@ func (s *Server) handleCreateAllocation(c echo.Context) error {
 		},
 	}
 
-	// Submit through senderClient with only sender in actAs.
-	// The factory contract carries the admin's authority automatically (delegated execution).
-	offset, err := senderClient.SubmitCommand(ctx, cmdID, submitReq, []string{senderID})
+	// Submit through participant1 (factory's home participant) with both admin and sender
+	// in actAs, so Canton can resolve the SimpleTokenRules factory contract (signatory: admin)
+	// and authorize the holding consumption (owner: sender).
+	offset, err := factoryClient.SubmitCommand(ctx, cmdID, submitReq, []string{factoryAdmin, senderID})
 	if err != nil {
 		log.Printf("allocation error: %v", err)
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("allocation failed: %v", err)})
