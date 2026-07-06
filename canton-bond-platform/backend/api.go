@@ -1484,7 +1484,7 @@ func (s *Server) handleProposeDvP(c echo.Context) error {
 		},
 	}
 
-	offset, err := senderClient.SubmitCommand(ctx, cmdID, submitReq, []string{bondSenderID})
+	offset, err := factoryClient.SubmitCommand(ctx, cmdID, submitReq, []string{factoryAdmin, bondSenderID})
 	if err != nil {
 		return c.JSON(http.StatusBadGateway, map[string]string{"error": fmt.Sprintf("propose failed: %v", err)})
 	}
